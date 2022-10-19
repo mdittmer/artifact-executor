@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+#
+# Top-level "Artifact Executor" command-line entry point.
+#
+
+declare BIN_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+declare CMD_DIR="${BIN_DIR}/../cmd"
+declare LIB_DIR="${BIN_DIR}/../lib"
+
+source "${LIB_DIR}/lib.sh"
+
+source "${LIB_DIR}/log.sh"
+init_logging default_log_level_config
+
+on_exit () {
+  log_debug "Cleaning up (pid=${BASHPID})"
+  # clean_up_temp_files_and_dirs
+  log_debug "All cleaned up (pid=${BASHPID})"
+}
+
+trap on_exit EXIT
+
+case $1 in
+  exec|execute|artifact-execute)
+    shift
+    source "${CMD_DIR}/exec.sh" "$@"
+    ;;
+  cache-file)
+    shift
+    source "${CMD_DIR}/cache_file.sh" "$@"
+    ;;
+  is-cached)
+    shift
+    source "${CMD_DIR}/is_cached.sh" "$@"
+    ;;
+  *)
+    >&2 printf 'Unknown artifact-executor command: "%s"\n' "$1"
+    exit 1
+esac
