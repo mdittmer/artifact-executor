@@ -6,7 +6,7 @@
 
 set -eo pipefail
 
-declare LIB_DIR=$(dirname ${BASH_SOURCE[0]})
+declare LIB_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 declare AE="${LIB_DIR}/../bin/artifact-executor"
 
 source "${LIB_DIR}/env.sh"

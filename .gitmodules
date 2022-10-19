@@ -1,0 +1,3 @@
+[submodule "fsatrace"]
+	path = fsatrace
+	url = https://github.com/jacereda/fsatrace.git

@@ -6,11 +6,12 @@
 
 set -eo pipefail
 
-source "$(dirname ${BASH_SOURCE[0]})/env.sh"
-source "$(dirname ${BASH_SOURCE[0]})/lib.sh"
-source "$(dirname ${BASH_SOURCE[0]})/trace.sh"
+declare LIB_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+source "${LIB_DIR}/env.sh"
+source "${LIB_DIR}/lib.sh"
+source "${LIB_DIR}/trace.sh"
 
-source "$(dirname ${BASH_SOURCE[0]})/log.sh"
+source "${LIB_DIR}/log.sh"
 init_logging default_log_level_config
 
 # Main function for tracing inputs/outputs via artifact-executor. The environment variables for

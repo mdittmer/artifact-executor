@@ -6,15 +6,19 @@
 
 set -eo pipefail
 
-source "$(dirname ${BASH_SOURCE[0]})/trace.sh"
+declare LIB_DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+source "${LIB_DIR}/trace.sh"
 
-source "$(dirname ${BASH_SOURCE[0]})/log.sh"
+source "${LIB_DIR}/log.sh"
 init_logging default_log_level_config
 
-# fsatrace needed for tracking inputs and outputs.
-# https://github.com/jacereda/fsatrace
-declare -r FSATRACE="$(which fsatrace)"
-declare -r FSATRACE_SO=$(dirname "${FSATRACE}")/fsatrace.so
+# fsatrace vendored in ../../fsatrace/.
+declare FSATRACE_DIR="$(dirname -- $(dirname -- "${LIB_DIR}"))/fsatrace"
+echo "${FSATRACE_DIR}"
+(cd "${FSATRACE_DIR}" && make) > /dev/null 2>&1
+
+declare FSATRACE="${FSATRACE_DIR}/fsatrace"
+declare FSATRACE_SO="${FSATRACE_DIR}/fsatrace.so"
 
 # Convert current environment to associative array for use as a default environment.
 declare -A default_environment
