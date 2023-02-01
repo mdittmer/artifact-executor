@@ -180,6 +180,10 @@ check_hermetic_files () {
         if [[ "${path}" =~ ^/proc/ ]]; then
           continue
         fi
+        # Accessing `/sys/...` is likely to be ephemeral files related to system status.
+        if [[ "${path}" =~ ^/sys/ ]]; then
+          continue
+        fi
 
         local sandbox_diff_status=""
         if [[ ! -f "${path}" ]]; then
@@ -243,8 +247,11 @@ check_traced_inputs_against_declared () {
     for input in ${ctiad_actual_inputs[@]}; do
       # Accessing `/proc/...` is likely to be ephemeral files related to the running process.
       if [[ ! "${input}" =~ ^/proc/ ]]; then
-        # Drop sandbox directory prefix from actual hermetic inputs.
-        printf '%s\n' "${input}" | sed "s/^${quoted_sandbox_dir}//"
+        # Accessing `/sys/...` is likely to be ephemeral files related to system status.
+        if [[ ! "${input}" =~ ^/sys/ ]]; then
+          # Drop sandbox directory prefix from actual hermetic inputs.
+          printf '%s\n' "${input}" | sed "s/^${quoted_sandbox_dir}//"
+        fi
       fi
     done
   ) | sort > "${actual_inputs_file}"
@@ -668,6 +675,10 @@ artifact_execute () {
         if [[ "${path}" =~ ^/proc/ ]]; then
           continue
         fi
+        # Accessing `/sys/...` is likely to be ephemeral files related to system status.
+        if [[ "${path}" =~ ^/sys/ ]]; then
+          continue
+        fi
 
         printf '%s\n' "${traced_input}"
       done
@@ -691,6 +702,10 @@ artifact_execute () {
       for traced_input in "${traced_inputs[@]}"; do
         # Accessing `/proc/...` is likely to be ephemeral files related to the running process.
         if [[ "${traced_input}" =~ ^/proc/ ]]; then
+          continue
+        fi
+        # Accessing `/sys/...` is likely to be ephemeral files related to system status.
+        if [[ "${path}" =~ ^/sys/ ]]; then
           continue
         fi
 

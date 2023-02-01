@@ -14,7 +14,6 @@ init_logging default_log_level_config
 
 # fsatrace vendored in ../../fsatrace/.
 declare FSATRACE_DIR="$(dirname -- $(dirname -- "${LIB_DIR}"))/fsatrace"
-echo "${FSATRACE_DIR}"
 (cd "${FSATRACE_DIR}" && make) > /dev/null 2>&1
 
 declare FSATRACE="${FSATRACE_DIR}/fsatrace"

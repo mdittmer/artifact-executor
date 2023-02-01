@@ -26,11 +26,14 @@ fn main() -> anyhow::Result<()> {
         .map_err(|err| err.context("failed to determine current working directory"))?;
     info!("Working directory: {:?}", working_directory);
 
-    match args.command {
-        artifact_executor::args::Command::Execute(command) => {
-            let _execute = artifact_executor::execute::Execute::from_command(command)?;
-        }
-    };
+    // match args.command {
+    //     artifact_executor::args::Command::Execute(command) => {
+    //         let _execute = artifact_executor::execute::ExecuteQuery::from_command(
+    //             args.cache_directory,
+    //             command,
+    //         )?;
+    //     }
+    // };
 
     Ok(())
 }
