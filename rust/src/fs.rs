@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub trait Filesystem {
     type Read: Read;
     type Write: Write;
-    type IoError;
+    type IoError: 'static + std::error::Error + Send + Sync;
     type PatternError: 'static + std::error::Error + Send + Sync;
     type GlobError: 'static + std::error::Error + Send + Sync;
 

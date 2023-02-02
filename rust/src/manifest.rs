@@ -110,6 +110,15 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest<FS> {
     }
 }
 
+impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest<FS> {
+    type Error = anyhow::Error;
+    fn try_from(filesystem_and_description: (&mut FS, &InputsConfig)) -> Result<Self, Self::Error> {
+        let (filesystem, description) = filesystem_and_description;
+        let description: InputsConfig = description.clone();
+        FilesManifest::try_from((filesystem, description))
+    }
+}
+
 impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, OutputsConfig)> for FilesManifest<FS> {
     type Error = anyhow::Error;
 
@@ -199,6 +208,18 @@ impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, OutputsConfig)> for FilesMa
             paths,
             _fs: PhantomData,
         })
+    }
+}
+
+impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, &OutputsConfig)> for FilesManifest<FS> {
+    type Error = anyhow::Error;
+
+    fn try_from(
+        inputs_and_outputs_description: (&FilesManifest<FS>, &OutputsConfig),
+    ) -> Result<Self, Self::Error> {
+        let (filesystem, description) = inputs_and_outputs_description;
+        let description: OutputsConfig = description.clone();
+        FilesManifest::try_from((filesystem, description))
     }
 }
 
