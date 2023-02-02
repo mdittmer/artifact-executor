@@ -1,6 +1,6 @@
 // use std::path::PathBuf;
-// use crate::config::Inputs as InputsConfig;
-// use crate::config::Outputs as OutputsConfig;
+// use crate::format::Inputs as InputsConfig;
+// use crate::format::Outputs as OutputsConfig;
 
 // fn parse_files_manifest_description(
 //     files_manifest_description: &PathBuf,

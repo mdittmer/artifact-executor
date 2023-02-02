@@ -1,5 +1,5 @@
 pub mod args;
-pub mod config;
 pub mod execute;
+pub mod format;
 pub mod fs;
 pub mod manifest;

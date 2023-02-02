@@ -1,7 +1,7 @@
-use crate::config::Inputs as InputsConfig;
-use crate::config::Match;
-use crate::config::MatchTransform;
-use crate::config::Outputs as OutputsConfig;
+use crate::format::Inputs as InputsConfig;
+use crate::format::Match;
+use crate::format::MatchTransform;
+use crate::format::Outputs as OutputsConfig;
 use crate::fs::Filesystem as FilesystemApi;
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -205,10 +205,10 @@ impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, OutputsConfig)> for FilesMa
 #[cfg(test)]
 mod tests {
     use super::FilesManifest;
-    use crate::config::Inputs as InputsConfig;
-    use crate::config::Match;
-    use crate::config::MatchTransform;
-    use crate::config::Outputs as OutputsConfig;
+    use crate::format::Inputs as InputsConfig;
+    use crate::format::Match;
+    use crate::format::MatchTransform;
+    use crate::format::Outputs as OutputsConfig;
     use crate::fs::HostFilesystem;
     use std::convert::TryFrom;
     use std::fs::File;
