@@ -20,7 +20,7 @@ pub struct Outputs {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MatchTransform {
     pub match_regular_expression: String,
-    pub match_transform_expression: String,
+    pub match_transform_expressions: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -1,8 +1,8 @@
-use glob::Pattern;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt as _;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -24,12 +24,10 @@ pub trait Filesystem {
 
     fn mark_as_executable<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Self::IoError>;
 
-    fn prepare_glob(&mut self, pattern_str: &str) -> Result<Pattern, Self::PatternError>;
-
-    fn execute_glob(
-        &mut self,
-        pattern: &Pattern,
-    ) -> Result<Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>>>, Self::PatternError>;
+    fn execute_glob<'a>(
+        &'a mut self,
+        glob_pattern_str: &str,
+    ) -> Result<Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>> + 'a>, Self::PatternError>;
 }
 
 pub struct HostFilesystem {
@@ -109,37 +107,92 @@ impl Filesystem for HostFilesystem {
         std::fs::set_permissions(path, permissions)
     }
 
-    fn prepare_glob(&mut self, pattern_str: &str) -> Result<Pattern, Self::PatternError> {
+    fn execute_glob<'a>(
+        &'a mut self,
+        glob_pattern_str: &str,
+    ) -> Result<Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>> + 'a>, Self::PatternError>
+    {
         let working_directory = self
             .working_directory
             .to_str()
             .expect("host filesystem working directory can be encoded as a string");
 
-        // TODO: This does not check "appears to be absolute path" in Windows.
-        let glob_string = if pattern_str.starts_with(std::path::MAIN_SEPARATOR) {
-            format!("{}{}", working_directory, pattern_str)
+        if Path::new(glob_pattern_str).is_absolute() {
+            glob::glob(glob_pattern_str)
         } else {
-            format!(
+            glob::glob(&format!(
                 "{}{}{}",
                 working_directory,
                 std::path::MAIN_SEPARATOR,
-                pattern_str
-            )
-        };
-
-        Pattern::new(&glob_string)
-    }
-
-    fn execute_glob(
-        &mut self,
-        pattern: &Pattern,
-    ) -> Result<Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>>>, Self::PatternError>
-    {
-        glob::glob(pattern.as_str()).map(|paths| {
-            let iter: Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>>> = Box::new(paths);
-            iter
+                glob_pattern_str
+            ))
+        }
+        .map(move |glob_iter| {
+            let glob_iter: Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>>> =
+                Box::new(glob_iter.map(move |path_result| {
+                    path_result.map(move |path| relativize_path(working_directory, &path))
+                }));
+            glob_iter
         })
     }
+}
+
+fn relativize_path<BasePath: AsRef<Path>, MainPath: AsRef<Path>>(
+    base_path: BasePath,
+    main_path: MainPath,
+) -> PathBuf {
+    if !base_path.as_ref().is_absolute() {
+        panic!(
+            "attempted to relatize path based on relative path, {:?}",
+            base_path.as_ref()
+        );
+    }
+    if !main_path.as_ref().is_absolute() {
+        panic!(
+            "attempted to relatize relative path, {:?}",
+            main_path.as_ref()
+        );
+    }
+    let mut base_iter = base_path.as_ref().components();
+    let mut main_iter = main_path.as_ref().components();
+
+    let mut path_components = vec![];
+    let mut dropped_components = vec![];
+    let mut matching = true;
+    loop {
+        match (matching, base_iter.next(), main_iter.next()) {
+            (true, Some(base_component), Some(main_component)) => {
+                if base_component != main_component {
+                    matching = false;
+                    path_components.push(Component::ParentDir);
+                    dropped_components.push(main_component);
+                }
+            }
+            (true, None, Some(main_component)) => {
+                path_components.push(main_component);
+            }
+            (true, Some(_base_component), None) => {
+                path_components.push(Component::ParentDir);
+            }
+            (false, Some(_base_component), Some(main_component)) => {
+                path_components.push(Component::ParentDir);
+                dropped_components.push(main_component);
+            }
+            (false, None, Some(main_component)) => {
+                path_components.extend(dropped_components.clone());
+                dropped_components.clear();
+                path_components.push(main_component);
+            }
+            (false, Some(_base_component), None) => {
+                path_components.push(Component::ParentDir);
+            }
+            (_, None, None) => {
+                path_components.extend(dropped_components.clone());
+                break;
+            }
+        }
+    }
+    path_components.into_iter().collect::<PathBuf>()
 }
 
 #[derive(Debug)]
@@ -170,6 +223,7 @@ pub fn copy_file<
 
 #[cfg(test)]
 mod tests {
+    use super::relativize_path;
     use super::Filesystem as _;
     use super::HostFilesystem;
     use std::fs::File;
@@ -238,15 +292,12 @@ mod tests {
             .open_file_for_read("newly_created_file.txt")
             .expect("host filesystem reopen for read");
 
-        let pattern = host_filesystem
-            .prepare_glob("sub/**/*.txt")
-            .expect("host filesystem prepared glob");
         let pattern_iter = host_filesystem
-            .execute_glob(&pattern)
+            .execute_glob("sub/**/*.txt")
             .expect("host filesystem executed glob");
         let mut matches = maplit::hashset! {
-            temporary_directory.path().join("sub/file_in_sub.txt"),
-            temporary_directory.path().join("sub/directory/file_in_directory.txt"),
+            PathBuf::from("sub/file_in_sub.txt"),
+            PathBuf::from("sub/directory/file_in_directory.txt"),
         };
         for pattern_result in pattern_iter {
             let path = pattern_result.expect("pattern path ok");
@@ -254,16 +305,13 @@ mod tests {
         }
         assert_eq!(maplit::hashset! {}, matches);
 
-        let pattern = host_filesystem
-            .prepare_glob("**/*.txt")
-            .expect("host filesystem prepared glob");
         let pattern_iter = host_filesystem
-            .execute_glob(&pattern)
+            .execute_glob("**/*.txt")
             .expect("host filesystem executed glob");
         let mut matches = maplit::hashset! {
-            temporary_directory.path().join("newly_created_file.txt"),
-            temporary_directory.path().join("sub/directory/file_in_directory.txt"),
-            temporary_directory.path().join("sub/file_in_sub.txt"),
+            PathBuf::from("newly_created_file.txt"),
+            PathBuf::from("sub/directory/file_in_directory.txt"),
+            PathBuf::from("sub/file_in_sub.txt"),
         };
         for pattern_result in pattern_iter {
             let path = pattern_result.expect("pattern path ok");
@@ -271,20 +319,17 @@ mod tests {
         }
         assert_eq!(maplit::hashset! {}, matches);
 
-        let pattern = host_filesystem
-            .prepare_glob("**/*")
-            .expect("host filesystem prepared glob");
         let pattern_iter = host_filesystem
-            .execute_glob(&pattern)
+            .execute_glob("**/*")
             .expect("host filesystem executed glob");
         let mut matches = maplit::hashset! {
-            temporary_directory.path().join("newly_created_file.txt"),
-            temporary_directory.path().join("pre-existing_file"),
-            temporary_directory.path().join("sub"),
-            temporary_directory.path().join("sub/directory"),
-            temporary_directory.path().join("sub/directory/file_in_directory.txt"),
-            temporary_directory.path().join("sub/directory/file_in_sub.abc"),
-            temporary_directory.path().join("sub/file_in_sub.txt"),
+            PathBuf::from("newly_created_file.txt"),
+            PathBuf::from("pre-existing_file"),
+            PathBuf::from("sub"),
+            PathBuf::from("sub/directory"),
+            PathBuf::from("sub/directory/file_in_directory.txt"),
+            PathBuf::from("sub/directory/file_in_sub.abc"),
+            PathBuf::from("sub/file_in_sub.txt"),
         };
         for pattern_result in pattern_iter {
             let path = pattern_result.expect("pattern path ok");
@@ -292,6 +337,17 @@ mod tests {
             assert!(matches.remove(&path));
         }
         assert_eq!(maplit::hashset! {}, matches);
+    }
+
+    #[test]
+    fn test_relativize_path() {
+        assert_eq!("", relativize_path("/a/b", "/a/b").to_str().unwrap());
+        assert_eq!("..", relativize_path("/a/b", "/a").to_str().unwrap());
+        assert_eq!("b", relativize_path("/a", "/a/b").to_str().unwrap());
+        assert_eq!(
+            "../../x/d",
+            relativize_path("/a/b/c/d", "/a/b/x/d").to_str().unwrap()
+        );
     }
 }
 

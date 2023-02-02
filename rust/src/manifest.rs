@@ -61,39 +61,8 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest<FS> {
 
     fn try_from(filesystem_and_description: (&mut FS, InputsConfig)) -> Result<Self, Self::Error> {
         let (filesystem, description) = filesystem_and_description;
-        let include_globs = description
-            .include_globs
-            .into_iter()
-            .map(|include_glob| {
-                filesystem
-                    .prepare_glob(&include_glob)
-                    .map_err(anyhow::Error::from)
-                    .map_err(|err| {
-                        err.context(format!(
-                            "malformed include-glob, {:?}, in inputs manifest description",
-                            include_glob
-                        ))
-                    })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let exclude_globs = description
-            .exclude_globs
-            .into_iter()
-            .map(|exclude_glob| {
-                filesystem
-                    .prepare_glob(&exclude_glob)
-                    .map_err(anyhow::Error::from)
-                    .map_err(|err| {
-                        err.context(format!(
-                            "malformed exclude-glob, {:?}, in inputs manifest description",
-                            exclude_glob
-                        ))
-                    })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
         let mut files: HashSet<PathBuf> = description.include_files.into_iter().collect();
-        for include_glob in include_globs {
+        for include_glob in description.include_globs {
             let include_path_results = filesystem.execute_glob(&include_glob)?;
             for include_path_result in include_path_results {
                 match include_path_result {
@@ -108,7 +77,7 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest<FS> {
                 }
             }
         }
-        for exclude_glob in exclude_globs {
+        for exclude_glob in description.exclude_globs {
             let exclude_path_results = filesystem.execute_glob(&exclude_glob)?;
             for exclude_path_result in exclude_path_results {
                 match exclude_path_result {
@@ -141,18 +110,18 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest<FS> {
     }
 }
 
-impl<FS: FilesystemApi> TryFrom<(FilesManifest<FS>, OutputsConfig)> for FilesManifest<FS> {
+impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, OutputsConfig)> for FilesManifest<FS> {
     type Error = anyhow::Error;
 
     fn try_from(
-        inputs_and_outputs_description: (FilesManifest<FS>, OutputsConfig),
+        inputs_and_outputs_description: (&FilesManifest<FS>, OutputsConfig),
     ) -> Result<Self, Self::Error> {
         let (inputs, description) = inputs_and_outputs_description;
         let mut files: HashSet<PathBuf> = description.include_files.into_iter().collect();
 
         struct MTRE {
             match_regular_expression: regex::Regex,
-            match_transform_expression: String,
+            match_transform_expressions: Vec<String>,
         }
 
         let include_match_transforms = description
@@ -161,7 +130,7 @@ impl<FS: FilesystemApi> TryFrom<(FilesManifest<FS>, OutputsConfig)> for FilesMan
             .map(
                 |MatchTransform {
                      match_regular_expression,
-                     match_transform_expression,
+                     match_transform_expressions,
                  }| {
                     Ok(MTRE {
                         match_regular_expression: regex::Regex::new(&match_regular_expression)
@@ -170,7 +139,7 @@ impl<FS: FilesystemApi> TryFrom<(FilesManifest<FS>, OutputsConfig)> for FilesMan
                                 "malformed include-regular-expression, {:?}, in outputs manifest description",
                                 match_regular_expression,
                             )))?,
-                        match_transform_expression,
+                        match_transform_expressions,
                     })
                 },
             )
@@ -192,25 +161,28 @@ impl<FS: FilesystemApi> TryFrom<(FilesManifest<FS>, OutputsConfig)> for FilesMan
 
         for input in inputs.iter() {
             let input = input.to_str().ok_or_else(|| anyhow::anyhow!("input path, {:?}, cannot be formatted as string for preparing associated output paths", input))?;
+
+            let mut exclude_input = false;
+            for exclude_match in exclude_matches.iter() {
+                if exclude_match.is_match(input) {
+                    exclude_input = true;
+                    break;
+                }
+            }
+            if exclude_input {
+                continue;
+            }
+
             for MTRE {
                 match_regular_expression,
-                match_transform_expression,
+                match_transform_expressions,
             } in include_match_transforms.iter()
             {
                 if match_regular_expression.is_match(input) {
-                    let output_string = match_regular_expression
-                        .replace_all(input, match_transform_expression)
-                        .to_string();
-
-                    let mut include_output = true;
-                    for exclude_match in exclude_matches.iter() {
-                        if exclude_match.is_match(&output_string) {
-                            include_output = false;
-                            break;
-                        }
-                    }
-
-                    if include_output {
+                    for match_transform_expression in match_transform_expressions.iter() {
+                        let output_string = match_regular_expression
+                            .replace_all(input, match_transform_expression)
+                            .to_string();
                         let output = PathBuf::from(output_string);
                         if !files.contains(&output) {
                             files.insert(output);
@@ -243,7 +215,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_input_manifest() {
+    fn test_inputs_manifest() {
         let temporary_directory = tempfile::tempdir().expect("temporary directory");
         std::fs::create_dir_all(temporary_directory.path().join("a/b/c"))
             .expect("manually create directories");
@@ -259,7 +231,7 @@ mod tests {
         let mut host_filesystem = HostFilesystem::try_new(temporary_directory.path().to_path_buf())
             .expect("host filesystem");
         let inputs_config = InputsConfig {
-            include_files: vec![PathBuf::from("a/b/p.vwx")],
+            include_files: vec![PathBuf::from("a/n.stu")],
             exclude_files: vec![PathBuf::from("a/b/p.vwx")],
             include_globs: vec![String::from("a/b/**/*.vwx")],
             exclude_globs: vec![String::from("**/c/*.vwx")],
@@ -269,12 +241,66 @@ mod tests {
                 .expect("create inputs manifest");
         assert_eq!(
             FilesManifest::<HostFilesystem>::from_paths(vec![
-                temporary_directory.path().join("a/b/p.vwx"),
-                temporary_directory.path().join("a/b/d/p.vwx"),
+                PathBuf::from("a/n.stu"),
+                PathBuf::from("a/b/d/p.vwx"),
             ]),
             inputs_manifest
         );
-        // TODO: Above assertion isn't right! The base directory should be stripped from the
-        // manifest paths.
+    }
+
+    #[test]
+    fn test_outputs_manifest() {
+        let inputs_manifest = FilesManifest::<HostFilesystem>::from_paths(vec![
+            PathBuf::from("m.stu"),
+            PathBuf::from("a/n.stu"),
+            PathBuf::from("a/b/o.stu"),
+            PathBuf::from("a/b/p.vwx"),
+            PathBuf::from("a/b/c/p.vwx"),
+            PathBuf::from("a/b/d/p.vwx"),
+        ]);
+        let outputs_config = OutputsConfig {
+            include_files: vec![PathBuf::from("out/log")],
+            include_match_transforms: vec![
+                MatchTransform {
+                    match_regular_expression: String::from("^(.*)[.](stu|vwx)$"),
+                    match_transform_expressions: vec![
+                        String::from("out/$1.out.1"),
+                        String::from("out/$1.out.2"),
+                    ],
+                },
+                MatchTransform {
+                    match_regular_expression: String::from("^(.*)[.]stu$"),
+                    match_transform_expressions: vec![String::from("out/$1.out.stu")],
+                },
+            ],
+            exclude_matches: vec![
+                Match {
+                    match_regular_expression: String::from("^.*/c/.*$"),
+                },
+                Match {
+                    match_regular_expression: String::from("^.*/o[.]stu$"),
+                },
+            ],
+        };
+
+        let outputs_manifest: FilesManifest<HostFilesystem> =
+            FilesManifest::try_from((&inputs_manifest, outputs_config))
+                .expect("create inputs manifest");
+        assert_eq!(
+            FilesManifest::<HostFilesystem>::from_paths(vec![
+                PathBuf::from("out/a/b/d/p.out.1"),
+                PathBuf::from("out/a/b/d/p.out.2"),
+                PathBuf::from("out/a/b/p.out.1"),
+                PathBuf::from("out/a/b/p.out.2"),
+                PathBuf::from("out/a/n.out.1"),
+                PathBuf::from("out/a/n.out.2"),
+                PathBuf::from("out/a/n.out.stu"),
+                PathBuf::from("out/log"),
+                PathBuf::from("out/m.out.1"),
+                PathBuf::from("out/m.out.2"),
+                PathBuf::from("out/m.out.stu"),
+            ]),
+            outputs_manifest
+        );
     }
 }
