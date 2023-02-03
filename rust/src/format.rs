@@ -1,9 +1,11 @@
+use anyhow::Context as _;
 use serde::de::Deserializer;
 use serde::de::Visitor;
 use serde::ser::Serializer;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::path::PathBuf;
 
@@ -111,13 +113,46 @@ impl Sha256 {
     }
 }
 
+impl TryFrom<&str> for Sha256 {
+    type Error = anyhow::Error;
+
+    fn try_from(hex_str: &str) -> Result<Self, Self::Error> {
+        let bytes_vec = hex::decode(hex_str)?;
+        let bytes_slice = bytes_vec.as_slice();
+        let sha256: [u8; 32] = bytes_slice
+            .try_into()
+            .map_err(anyhow::Error::from)
+            .with_context(|| {
+                format!(
+                    "expected hex string describing 32 bytes, but got {} bytes",
+                    bytes_vec.len()
+                )
+            })?;
+        Ok(Sha256(sha256))
+    }
+}
+
+impl TryFrom<String> for Sha256 {
+    type Error = anyhow::Error;
+
+    fn try_from(hex_string: String) -> Result<Self, Self::Error> {
+        let hex_str: &str = &hex_string;
+        Sha256::try_from(hex_str)
+    }
+}
+
+impl ToString for Sha256 {
+    fn to_string(&self) -> String {
+        hex::encode(self.0)
+    }
+}
+
 impl Serialize for Sha256 {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let hex_string = hex::encode(self.0);
-        serializer.serialize_str(&hex_string)
+        serializer.serialize_str(&self.to_string())
     }
 }
 
@@ -134,20 +169,7 @@ impl<'de> Visitor<'de> for Sha256Visitor {
     where
         E: serde::de::Error,
     {
-        let bytes_vec = hex::decode(hex_str).map_err(|_| {
-            E::custom(format!(
-                "expected hex string to describing 32 bytes, but got {:?}",
-                hex_str
-            ))
-        })?;
-        let bytes_slice = bytes_vec.as_slice();
-        let sha256: [u8; 32] = bytes_slice.try_into().map_err(|_| {
-            E::custom(format!(
-                "expected hex string describing 32 bytes, but got {} bytes",
-                bytes_vec.len()
-            ))
-        })?;
-        Ok(Sha256(sha256))
+        Sha256::try_from(hex_str).map_err(|err| E::custom(format!("{:?}", err)))
     }
 }
 
@@ -165,38 +187,63 @@ impl<'de> Deserialize<'de> for Sha256 {
 //
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TaskSummary {
-    pub input: TaskInput,
-    pub output: TaskOutput,
+#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+pub struct TaskSummary<Id>
+where
+    Id: Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    pub input: TaskInput<Id>,
+    pub output: TaskOutput<Id>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TaskIndex {
-    pub entries: Vec<TaskIdentityIndex>,
+#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+pub struct TaskIndex<Id>
+where
+    Id: Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    pub entries: Vec<TaskIdentityIndex<Id>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TaskIdentityIndex {
+#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+pub struct TaskIdentityIndex<Id>
+where
+    Id: Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
     pub identity_scheme: IdentityScheme,
-    pub task_input_identity_to_output: HashMap<String, TaskOutput>,
+    pub task_input_identity_to_output: HashMap<String, TaskOutput<Id>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TaskInput {
+#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+pub struct TaskInput<Id>
+where
+    Id: Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
     #[serde(flatten)]
     pub environment_variables: EnvironmentVariables,
     #[serde(flatten)]
     pub program: Program,
     #[serde(flatten)]
     pub arguments: Arguments,
-    pub inputs: FileIdentitiesManifest,
-    pub outputs: FileIdentitiesManifest,
+    pub inputs: FileIdentitiesManifest<Id>,
+    pub outputs: FileIdentitiesManifest<Id>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TaskOutput {
-    pub inputs: FileIdentitiesManifest,
-    pub outputs: FileIdentitiesManifest,
+#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+pub struct TaskOutput<Id>
+where
+    Id: Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    pub inputs: FileIdentitiesManifest<Id>,
+    pub outputs: FileIdentitiesManifest<Id>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -205,7 +252,12 @@ pub struct FilesManifest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct FileIdentitiesManifest {
+#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+pub struct FileIdentitiesManifest<Id>
+where
+    Id: Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
     pub identity_scheme: IdentityScheme,
-    pub paths: Vec<(PathBuf, String)>,
+    pub paths: Vec<(PathBuf, Option<Id>)>,
 }
