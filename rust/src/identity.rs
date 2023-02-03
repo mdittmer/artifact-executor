@@ -4,14 +4,15 @@ use crate::format::Sha256;
 use crate::fs::Filesystem;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::FilesManifest;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest as _;
 use sha2::Sha256 as Sha256Hasher;
 use std::path::Path;
 
-pub trait IdentityScheme<'de> {
-    type Identity: Deserialize<'de> + Serialize + ToString;
+pub trait IdentityScheme {
+    type Identity: DeserializeOwned + Serialize + ToString;
 
     const IDENTITY_SCHEME: IdentitySchemeEnum;
 
@@ -31,7 +32,7 @@ pub trait IdentityScheme<'de> {
 
 pub struct ContentSha256;
 
-impl<'de> IdentityScheme<'de> for ContentSha256 {
+impl IdentityScheme for ContentSha256 {
     type Identity = Sha256;
 
     const IDENTITY_SCHEME: IdentitySchemeEnum = IdentitySchemeEnum::ContentSha256;
@@ -87,7 +88,7 @@ impl<'de> IdentityScheme<'de> for ContentSha256 {
     }
 }
 
-fn identify_files<'de, FS, Id, IS>(
+fn identify_files<FS, Id, IS>(
     filesystem: &mut FS,
     files_manifest: &FilesManifest,
 ) -> Result<FileIdentitiesManifest<Id>, anyhow::Error>
@@ -95,7 +96,7 @@ where
     FS: Filesystem,
     Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
-    IS: IdentityScheme<'de, Identity = Id>,
+    IS: IdentityScheme<Identity = Id>,
 {
     FileIdentitiesManifestTransport {
         identity_scheme: <IS as IdentityScheme>::IDENTITY_SCHEME,

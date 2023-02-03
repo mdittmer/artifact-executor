@@ -99,10 +99,10 @@ impl Filesystem for HostFilesystem {
         sub_directory: P,
     ) -> Result<Self, Self::InternalError> {
         let working_directory = self.working_directory.clone();
-        let working_directory = self
+        let sub_working_directory = self
             .get_absolute_path(&working_directory)
             .join(sub_directory);
-        Self::try_new(working_directory)
+        Self::try_new(sub_working_directory)
     }
 
     fn open_file_for_read<P: AsRef<Path>>(&mut self, path: P) -> Result<Self::Read, Self::IoError> {
