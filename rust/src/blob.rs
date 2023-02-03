@@ -165,7 +165,7 @@ fn read_blob_pointer<FS: FilesystemApi, IdentityScheme: IdentitySchemeApi, RD: R
     source_identity: &IdentityScheme::Identity,
 ) -> Result<IdentityScheme::Identity, anyhow::Error>
 where
-    for<'de2> IdentityScheme::Identity: Deserialize<'de2>,
+    IdentityScheme::Identity: DeserializeOwned,
 {
     let blob_name = PathBuf::from(source_identity.to_string());
     let blob_file = filesystem.open_file_for_read(&blob_name)?;

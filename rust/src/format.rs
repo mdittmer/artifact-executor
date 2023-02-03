@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use serde::de::DeserializeOwned;
 use serde::de::Deserializer;
 use serde::de::Visitor;
 use serde::ser::Serializer;
@@ -187,43 +188,39 @@ impl<'de> Deserialize<'de> for Sha256 {
 //
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+#[serde(bound = "Id: Clone + DeserializeOwned + Serialize")]
 pub struct TaskSummary<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub input: TaskInput<Id>,
     pub output: TaskOutput<Id>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+#[serde(bound = "Id: Clone + DeserializeOwned + Serialize")]
 pub struct TaskIndex<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub entries: Vec<TaskIdentityIndex<Id>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+#[serde(bound = "Id: Clone + DeserializeOwned + Serialize")]
 pub struct TaskIdentityIndex<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub identity_scheme: IdentityScheme,
     pub task_input_identity_to_output: HashMap<String, TaskOutput<Id>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+#[serde(bound = "Id: Clone + DeserializeOwned + Serialize")]
 pub struct TaskInput<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     #[serde(flatten)]
     pub environment_variables: EnvironmentVariables,
@@ -236,11 +233,10 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+#[serde(bound = "Id: Clone + DeserializeOwned + Serialize")]
 pub struct TaskOutput<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub input_files_with_program: FileIdentitiesManifest<Id>,
     pub output_files: FileIdentitiesManifest<Id>,
@@ -252,11 +248,10 @@ pub struct FilesManifest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
+#[serde(bound = "Id: Clone + DeserializeOwned + Serialize")]
 pub struct FileIdentitiesManifest<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub identity_scheme: IdentityScheme,
     pub identities: Vec<(PathBuf, Option<Id>)>,

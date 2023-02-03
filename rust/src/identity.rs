@@ -94,8 +94,7 @@ fn identify_files<FS, Id, IS>(
 ) -> Result<FileIdentitiesManifest<Id>, anyhow::Error>
 where
     FS: Filesystem,
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
     IS: IdentityScheme<Identity = Id>,
 {
     FileIdentitiesManifestTransport {

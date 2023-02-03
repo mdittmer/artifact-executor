@@ -4,6 +4,7 @@ use crate::manifest::Arguments;
 use crate::manifest::EnvironmentVariables;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Program;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -18,8 +19,7 @@ pub struct Inputs<'a, Id> {
 
 impl<'a, Id> Inputs<'a, Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub fn into_transport(self) -> TaskInput<Id> {
         TaskInput {
@@ -45,8 +45,7 @@ pub struct Outputs<'a, Id> {
 
 impl<'a, Id> Outputs<'a, Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     fn into_transport(self) -> TaskOutput<Id> {
         TaskOutput {

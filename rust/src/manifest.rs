@@ -10,6 +10,7 @@ use crate::format::MatchTransform;
 use crate::format::Outputs as OutputsConfig;
 use crate::format::Program as ProgramTransport;
 use crate::fs::Filesystem as FilesystemApi;
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -221,8 +222,7 @@ pub struct FileIdentitiesManifest<Id> {
 
 impl<Id> FileIdentitiesManifest<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub fn into_transport(self) -> FileIdentitiesManifestTransport<Id> {
         FileIdentitiesManifestTransport {
@@ -240,8 +240,7 @@ where
 #[cfg(test)]
 impl<Id> FileIdentitiesManifest<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     pub fn from_transport(mut transport: FileIdentitiesManifestTransport<Id>) -> Self {
         transport
@@ -261,8 +260,7 @@ where
 
 impl<Id> TryFrom<FileIdentitiesManifestTransport<Id>> for FileIdentitiesManifest<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     type Error = anyhow::Error;
 
@@ -292,8 +290,7 @@ where
 
 impl<Id> TryFrom<&FileIdentitiesManifestTransport<Id>> for FileIdentitiesManifest<Id>
 where
-    Id: Clone + Serialize,
-    for<'de2> Id: Deserialize<'de2>,
+    Id: Clone + DeserializeOwned + Serialize,
 {
     type Error = anyhow::Error;
 
