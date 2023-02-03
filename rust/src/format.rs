@@ -92,7 +92,7 @@ pub struct Program {
     pub program: PathBuf,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityScheme {
     ContentSha256,
@@ -104,7 +104,7 @@ impl Default for IdentityScheme {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Sha256([u8; 32]);
 
 impl Sha256 {
@@ -190,7 +190,7 @@ impl<'de> Deserialize<'de> for Sha256 {
 #[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
 pub struct TaskSummary<Id>
 where
-    Id: Serialize,
+    Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
     pub input: TaskInput<Id>,
@@ -201,7 +201,7 @@ where
 #[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
 pub struct TaskIndex<Id>
 where
-    Id: Serialize,
+    Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
     pub entries: Vec<TaskIdentityIndex<Id>>,
@@ -211,7 +211,7 @@ where
 #[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
 pub struct TaskIdentityIndex<Id>
 where
-    Id: Serialize,
+    Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
     pub identity_scheme: IdentityScheme,
@@ -222,7 +222,7 @@ where
 #[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
 pub struct TaskInput<Id>
 where
-    Id: Serialize,
+    Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
     #[serde(flatten)]
@@ -239,7 +239,7 @@ where
 #[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
 pub struct TaskOutput<Id>
 where
-    Id: Serialize,
+    Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
     pub inputs: FileIdentitiesManifest<Id>,
@@ -255,9 +255,9 @@ pub struct FilesManifest {
 #[serde(bound = "Id: Serialize, for<'de2> Id: Deserialize<'de2>")]
 pub struct FileIdentitiesManifest<Id>
 where
-    Id: Serialize,
+    Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
     pub identity_scheme: IdentityScheme,
-    pub paths: Vec<(PathBuf, Option<Id>)>,
+    pub identities: Vec<(PathBuf, Option<Id>)>,
 }

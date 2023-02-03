@@ -1,8 +1,13 @@
+use crate::context::diff_paths_to_string;
+use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
+use crate::format::IdentityScheme;
 use crate::format::Inputs as InputsConfig;
 use crate::format::Match;
 use crate::format::MatchTransform;
 use crate::format::Outputs as OutputsConfig;
 use crate::fs::Filesystem as FilesystemApi;
+use serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::marker::PhantomData;
 use std::path::PathBuf;
@@ -12,6 +17,12 @@ use std::slice::Iter;
 pub struct FilesManifest<FS: FilesystemApi> {
     paths: Vec<PathBuf>,
     _fs: PhantomData<FS>,
+}
+
+impl<FS: FilesystemApi> FilesManifest<FS> {
+    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
+        self.paths.iter()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -220,6 +231,78 @@ impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, &OutputsConfig)> for FilesM
         let (filesystem, description) = inputs_and_outputs_description;
         let description: OutputsConfig = description.clone();
         FilesManifest::try_from((filesystem, description))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileIdentitiesManifest<Id> {
+    identity_scheme: IdentityScheme,
+    identities: Vec<(PathBuf, Option<Id>)>,
+}
+
+#[cfg(test)]
+impl<Id> FileIdentitiesManifest<Id>
+where
+    Id: Clone + Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    pub fn from_transport(mut transport: FileIdentitiesManifestTransport<Id>) -> Self {
+        transport
+            .identities
+            .sort_by(|(path1, _), (path2, _)| path1.cmp(path2));
+        Self {
+            identity_scheme: transport.identity_scheme,
+            identities: transport.identities,
+        }
+    }
+
+    pub fn from_borrowed_transport(transport: &FileIdentitiesManifestTransport<Id>) -> Self {
+        let transport: FileIdentitiesManifestTransport<Id> = transport.clone();
+        FileIdentitiesManifest::from_transport(transport)
+    }
+}
+
+impl<Id> TryFrom<FileIdentitiesManifestTransport<Id>> for FileIdentitiesManifest<Id>
+where
+    Id: Clone + Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(transport: FileIdentitiesManifestTransport<Id>) -> Result<Self, anyhow::Error> {
+        let stated_paths: Vec<_> = transport.identities.iter().map(|(path, _)| path).collect();
+        let mut sorted_paths: Vec<_> = transport.identities.iter().map(|(path, _)| path).collect();
+        sorted_paths.sort();
+        let sorted_paths = sorted_paths;
+        if stated_paths != sorted_paths {
+            return Err(
+                anyhow::anyhow!("attempted to load unsorted file identities manifest").context(
+                    diff_paths_to_string(
+                        "stated paths vs. sorted paths",
+                        &stated_paths,
+                        &sorted_paths,
+                    ),
+                ),
+            );
+        }
+
+        Ok(FileIdentitiesManifest {
+            identity_scheme: transport.identity_scheme,
+            identities: transport.identities,
+        })
+    }
+}
+
+impl<Id> TryFrom<&FileIdentitiesManifestTransport<Id>> for FileIdentitiesManifest<Id>
+where
+    Id: Clone + Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    type Error = anyhow::Error;
+
+    fn try_from(transport: &FileIdentitiesManifestTransport<Id>) -> Result<Self, anyhow::Error> {
+        let transport: FileIdentitiesManifestTransport<Id> = transport.clone();
+        Self::try_from(transport)
     }
 }
 
