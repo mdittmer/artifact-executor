@@ -231,8 +231,8 @@ where
     pub program: Program,
     #[serde(flatten)]
     pub arguments: Arguments,
-    pub inputs: FileIdentitiesManifest<Id>,
-    pub outputs: FileIdentitiesManifest<Id>,
+    pub input_files: FileIdentitiesManifest<Id>,
+    pub output_files: FileIdentitiesManifest<Id>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -242,8 +242,8 @@ where
     Id: Clone + Serialize,
     for<'de2> Id: Deserialize<'de2>,
 {
-    pub inputs: FileIdentitiesManifest<Id>,
-    pub outputs: FileIdentitiesManifest<Id>,
+    pub input_files_with_program: FileIdentitiesManifest<Id>,
+    pub output_files: FileIdentitiesManifest<Id>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

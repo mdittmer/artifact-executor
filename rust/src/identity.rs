@@ -9,10 +9,9 @@ use serde::Serialize;
 use sha2::Digest as _;
 use sha2::Sha256 as Sha256Hasher;
 use std::path::Path;
-use std::path::PathBuf;
 
 pub trait IdentityScheme<'de> {
-    type Identity: Serialize + Deserialize<'de>;
+    type Identity: Deserialize<'de> + Serialize + ToString;
 
     const IDENTITY_SCHEME: IdentitySchemeEnum;
 
@@ -27,7 +26,7 @@ pub trait IdentityScheme<'de> {
         content: &[u8],
     ) -> Result<Self::Identity, anyhow::Error>;
 
-    fn identify_content(content: &[u8]) -> Result<Self::Identity, anyhow::Error>;
+    fn identify_content<R: std::io::Read>(content: R) -> Result<Self::Identity, anyhow::Error>;
 }
 
 pub struct ContentSha256;
@@ -67,9 +66,18 @@ impl<'de> IdentityScheme<'de> for ContentSha256 {
         Ok(Sha256::new(hash))
     }
 
-    fn identify_content(content: &[u8]) -> Result<Self::Identity, anyhow::Error> {
+    fn identify_content<R: std::io::Read>(mut content: R) -> Result<Self::Identity, anyhow::Error> {
         let mut hasher = Sha256Hasher::new();
-        hasher.update(content);
+        let mut buffer = [0; 1024];
+
+        loop {
+            let count = content.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+
         let hash: [u8; 32] = hasher
             .finalize()
             .as_slice()
@@ -81,7 +89,7 @@ impl<'de> IdentityScheme<'de> for ContentSha256 {
 
 fn identify_files<'de, FS, Id, IS>(
     filesystem: &mut FS,
-    files_manifest: &FilesManifest<FS>,
+    files_manifest: &FilesManifest,
 ) -> Result<FileIdentitiesManifest<Id>, anyhow::Error>
 where
     FS: Filesystem,
@@ -89,14 +97,14 @@ where
     for<'de2> Id: Deserialize<'de2>,
     IS: IdentityScheme<'de, Identity = Id>,
 {
-    Ok(FileIdentitiesManifestTransport {
+    FileIdentitiesManifestTransport {
         identity_scheme: <IS as IdentityScheme>::IDENTITY_SCHEME,
         identities: files_manifest
             .paths()
             .map(|path| (path.clone(), IS::identify_file(filesystem, path).ok()))
             .collect(),
     }
-    .try_into()?)
+    .try_into()
 }
 
 #[cfg(test)]
@@ -152,9 +160,8 @@ mod tests {
 
         let mut filesystem = HostFilesystem::try_new(temporary_directory.path().to_path_buf())
             .expect("host filesystem");
-        let files_manifest = FilesManifest::<HostFilesystem>::from_paths(
-            files.iter().map(|(path, _)| path.clone()).collect(),
-        );
+        let files_manifest =
+            FilesManifest::from_paths(files.iter().map(|(path, _)| path.clone()).collect());
 
         let expected_identities: Vec<_> = files
             .into_iter()

@@ -6,12 +6,16 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 
-pub trait Filesystem {
+pub trait Filesystem: Sized {
     type Read: Read;
     type Write: Write;
+    type InternalError;
     type IoError: 'static + std::error::Error + Send + Sync;
     type PatternError: 'static + std::error::Error + Send + Sync;
     type GlobError: 'static + std::error::Error + Send + Sync;
+
+    fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P)
+        -> Result<Self, Self::InternalError>;
 
     fn open_file_for_read<P: AsRef<Path>>(&mut self, path: P) -> Result<Self::Read, Self::IoError>;
 
@@ -19,6 +23,12 @@ pub trait Filesystem {
         &mut self,
         path: P,
     ) -> Result<Self::Write, Self::IoError>;
+
+    fn move_from_to<FromPath: AsRef<Path>, ToPath: AsRef<Path>>(
+        &mut self,
+        from_path: FromPath,
+        to_path: ToPath,
+    ) -> Result<(), Self::IoError>;
 
     fn create_directories<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Self::IoError>;
 
@@ -30,6 +40,7 @@ pub trait Filesystem {
     ) -> Result<Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>> + 'a>, Self::PatternError>;
 }
 
+#[derive(Clone, Debug)]
 pub struct HostFilesystem {
     working_directory: PathBuf,
 }
@@ -78,9 +89,21 @@ impl HostFilesystem {
 impl Filesystem for HostFilesystem {
     type Read = File;
     type Write = File;
+    type InternalError = anyhow::Error;
     type IoError = std::io::Error;
     type PatternError = glob::PatternError;
     type GlobError = glob::GlobError;
+
+    fn sub_system<P: AsRef<Path>>(
+        &mut self,
+        sub_directory: P,
+    ) -> Result<Self, Self::InternalError> {
+        let working_directory = self.working_directory.clone();
+        let working_directory = self
+            .get_absolute_path(&working_directory)
+            .join(sub_directory);
+        Self::try_new(working_directory)
+    }
 
     fn open_file_for_read<P: AsRef<Path>>(&mut self, path: P) -> Result<Self::Read, Self::IoError> {
         let path = self.get_absolute_path(path);
@@ -93,6 +116,16 @@ impl Filesystem for HostFilesystem {
     ) -> Result<Self::Write, Self::IoError> {
         let path = self.get_absolute_path(path);
         File::create(path)
+    }
+
+    fn move_from_to<FromPath: AsRef<Path>, ToPath: AsRef<Path>>(
+        &mut self,
+        from_path: FromPath,
+        to_path: ToPath,
+    ) -> Result<(), Self::IoError> {
+        let from_path = self.get_absolute_path(from_path);
+        let to_path = self.get_absolute_path(to_path);
+        std::fs::rename(from_path, to_path)
     }
 
     fn create_directories<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Self::IoError> {

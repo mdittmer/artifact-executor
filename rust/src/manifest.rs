@@ -1,65 +1,50 @@
-use crate::context::diff_paths_to_string;
+use crate::context::diff_items_to_string;
+use crate::format::Arguments as ArgumentsTransport;
+use crate::format::EnvironmentVariables as EnvironmentVariablesTransport;
 use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
+use crate::format::FilesManifest as FilesManifestTransport;
 use crate::format::IdentityScheme;
 use crate::format::Inputs as InputsConfig;
 use crate::format::Match;
 use crate::format::MatchTransform;
 use crate::format::Outputs as OutputsConfig;
+use crate::format::Program as ProgramTransport;
 use crate::fs::Filesystem as FilesystemApi;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashSet;
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::slice::Iter;
 
-#[derive(Clone)]
-pub struct FilesManifest<FS: FilesystemApi> {
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilesManifest {
     paths: Vec<PathBuf>,
-    _fs: PhantomData<FS>,
 }
 
-impl<FS: FilesystemApi> FilesManifest<FS> {
+impl FilesManifest {
     pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
         self.paths.iter()
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct BareFilesManifest<'a> {
-    paths: &'a Vec<PathBuf>,
-}
-
-impl<FS: FilesystemApi> PartialEq for FilesManifest<FS> {
-    fn eq(&self, other: &Self) -> bool {
-        BareFilesManifest { paths: &self.paths }
-            == BareFilesManifest {
-                paths: &other.paths,
-            }
-    }
-}
-
-impl<FS: FilesystemApi> std::fmt::Debug for FilesManifest<FS> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        BareFilesManifest { paths: &self.paths }.fmt(f)
-    }
-}
-
-impl<FS: FilesystemApi> FilesManifest<FS> {
+impl FilesManifest {
     pub fn empty() -> Self {
-        Self {
-            paths: vec![],
-            _fs: PhantomData,
-        }
+        Self { paths: vec![] }
     }
 
     #[cfg(test)]
     pub fn from_paths(mut paths: Vec<PathBuf>) -> Self {
         paths.sort();
-        Self {
-            paths,
-            _fs: PhantomData,
-        }
+        Self { paths }
+    }
+
+    pub fn into_transport(self) -> FilesManifestTransport {
+        FilesManifestTransport { paths: self.paths }
+    }
+
+    pub fn as_transport(&self) -> FilesManifestTransport {
+        let self_clone: Self = self.clone();
+        self_clone.into_transport()
     }
 
     pub fn iter(&self) -> Iter<'_, PathBuf> {
@@ -67,7 +52,7 @@ impl<FS: FilesystemApi> FilesManifest<FS> {
     }
 }
 
-impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest<FS> {
+impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest {
     type Error = anyhow::Error;
 
     fn try_from(filesystem_and_description: (&mut FS, InputsConfig)) -> Result<Self, Self::Error> {
@@ -114,14 +99,11 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest<FS> {
         let mut paths: Vec<PathBuf> = files.into_iter().collect();
         paths.sort();
 
-        Ok(FilesManifest {
-            paths,
-            _fs: PhantomData,
-        })
+        Ok(FilesManifest { paths })
     }
 }
 
-impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest<FS> {
+impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest {
     type Error = anyhow::Error;
     fn try_from(filesystem_and_description: (&mut FS, &InputsConfig)) -> Result<Self, Self::Error> {
         let (filesystem, description) = filesystem_and_description;
@@ -130,11 +112,11 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest<FS> 
     }
 }
 
-impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, OutputsConfig)> for FilesManifest<FS> {
+impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
     type Error = anyhow::Error;
 
     fn try_from(
-        inputs_and_outputs_description: (&FilesManifest<FS>, OutputsConfig),
+        inputs_and_outputs_description: (&FilesManifest, OutputsConfig),
     ) -> Result<Self, Self::Error> {
         let (inputs, description) = inputs_and_outputs_description;
         let mut files: HashSet<PathBuf> = description.include_files.into_iter().collect();
@@ -215,18 +197,15 @@ impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, OutputsConfig)> for FilesMa
         let mut paths: Vec<PathBuf> = files.into_iter().collect();
         paths.sort();
 
-        Ok(FilesManifest {
-            paths,
-            _fs: PhantomData,
-        })
+        Ok(FilesManifest { paths })
     }
 }
 
-impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, &OutputsConfig)> for FilesManifest<FS> {
+impl TryFrom<(&FilesManifest, &OutputsConfig)> for FilesManifest {
     type Error = anyhow::Error;
 
     fn try_from(
-        inputs_and_outputs_description: (&FilesManifest<FS>, &OutputsConfig),
+        inputs_and_outputs_description: (&FilesManifest, &OutputsConfig),
     ) -> Result<Self, Self::Error> {
         let (filesystem, description) = inputs_and_outputs_description;
         let description: OutputsConfig = description.clone();
@@ -238,6 +217,24 @@ impl<FS: FilesystemApi> TryFrom<(&FilesManifest<FS>, &OutputsConfig)> for FilesM
 pub struct FileIdentitiesManifest<Id> {
     identity_scheme: IdentityScheme,
     identities: Vec<(PathBuf, Option<Id>)>,
+}
+
+impl<Id> FileIdentitiesManifest<Id>
+where
+    Id: Clone + Serialize,
+    for<'de2> Id: Deserialize<'de2>,
+{
+    pub fn into_transport(self) -> FileIdentitiesManifestTransport<Id> {
+        FileIdentitiesManifestTransport {
+            identity_scheme: self.identity_scheme,
+            identities: self.identities,
+        }
+    }
+
+    pub fn as_transport(&self) -> FileIdentitiesManifestTransport<Id> {
+        let self_clone: Self = self.clone();
+        self_clone.into_transport()
+    }
 }
 
 #[cfg(test)]
@@ -277,7 +274,7 @@ where
         if stated_paths != sorted_paths {
             return Err(
                 anyhow::anyhow!("attempted to load unsorted file identities manifest").context(
-                    diff_paths_to_string(
+                    diff_items_to_string(
                         "stated paths vs. sorted paths",
                         &stated_paths,
                         &sorted_paths,
@@ -303,6 +300,166 @@ where
     fn try_from(transport: &FileIdentitiesManifestTransport<Id>) -> Result<Self, anyhow::Error> {
         let transport: FileIdentitiesManifestTransport<Id> = transport.clone();
         Self::try_from(transport)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct EnvironmentVariables {
+    pub environment_variables: Vec<(String, String)>,
+}
+
+impl EnvironmentVariables {
+    /// Load environment variables from a user-specified configuration. Such configurations may be
+    /// out of order, but must contain no duplicates.
+    pub fn try_from_config(
+        mut environment_variables: EnvironmentVariablesTransport,
+    ) -> Result<Self, anyhow::Error> {
+        environment_variables
+            .environment_variables
+            .sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
+        let environment_variables = environment_variables.environment_variables;
+        let deduped_environment_variables: HashSet<_> =
+            environment_variables.clone().into_iter().collect();
+        let deduped_environment_variables: Vec<_> =
+            deduped_environment_variables.into_iter().collect();
+        if environment_variables != deduped_environment_variables {
+            return Err(
+                anyhow::anyhow!("environment variables configuration contains duplicates").context(
+                    diff_items_to_string(
+                        "sorted vs. sorted+deduped",
+                        &environment_variables,
+                        &deduped_environment_variables,
+                    ),
+                ),
+            );
+        }
+        Ok(Self {
+            environment_variables,
+        })
+    }
+
+    pub fn try_from_borrowed_config(
+        environment_variables: &EnvironmentVariablesTransport,
+    ) -> Result<Self, anyhow::Error> {
+        let environment_variables: EnvironmentVariablesTransport = environment_variables.clone();
+        Self::try_from_config(environment_variables)
+    }
+
+    /// Load environment variables from a tool-generated manifest. Such manifests must be sorted and
+    /// deduplicated.
+    pub fn try_from_manifest(
+        mut environment_variables: EnvironmentVariablesTransport,
+    ) -> Result<Self, anyhow::Error> {
+        let input_environment_variables = environment_variables.environment_variables.clone();
+        environment_variables
+            .environment_variables
+            .sort_by(|(key1, _), (key2, _)| key1.cmp(key2));
+        let sorted_environment_variables = environment_variables.environment_variables;
+        if input_environment_variables != sorted_environment_variables {
+            return Err(
+                anyhow::anyhow!("environment variables manifest is not sorted").context(
+                    diff_items_to_string(
+                        "input vs. sorted",
+                        &input_environment_variables,
+                        &sorted_environment_variables,
+                    ),
+                ),
+            );
+        }
+        let deduped_environment_variables: HashSet<_> =
+            sorted_environment_variables.clone().into_iter().collect();
+        let deduped_environment_variables: Vec<_> =
+            deduped_environment_variables.into_iter().collect();
+        if sorted_environment_variables != deduped_environment_variables {
+            return Err(
+                anyhow::anyhow!("environment variables manifest contains duplicates").context(
+                    diff_items_to_string(
+                        "sorted vs. sorted+deduped",
+                        &sorted_environment_variables,
+                        &deduped_environment_variables,
+                    ),
+                ),
+            );
+        }
+        Ok(Self {
+            environment_variables: sorted_environment_variables,
+        })
+    }
+
+    pub fn try_from_borrowed_manifest(
+        environment_variables: &EnvironmentVariablesTransport,
+    ) -> Result<Self, anyhow::Error> {
+        let environment_variables: EnvironmentVariablesTransport = environment_variables.clone();
+        Self::try_from_manifest(environment_variables)
+    }
+
+    pub fn into_manifest(self) -> EnvironmentVariablesTransport {
+        EnvironmentVariablesTransport {
+            environment_variables: self.environment_variables,
+        }
+    }
+
+    pub fn as_manifest(&self) -> EnvironmentVariablesTransport {
+        let self_clone: Self = self.clone();
+        self_clone.into_manifest()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Program {
+    program: PathBuf,
+}
+
+impl From<ProgramTransport> for Program {
+    fn from(transport: ProgramTransport) -> Self {
+        Self {
+            program: transport.program,
+        }
+    }
+}
+
+impl From<&ProgramTransport> for Program {
+    fn from(transport: &ProgramTransport) -> Self {
+        let transport: ProgramTransport = transport.clone();
+        Self::from(transport)
+    }
+}
+
+impl<'a> From<&Program> for ProgramTransport {
+    fn from(program: &Program) -> Self {
+        let program: Program = program.clone();
+        Self {
+            program: program.program,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Arguments {
+    arguments: Vec<String>,
+}
+
+impl From<ArgumentsTransport> for Arguments {
+    fn from(transport: ArgumentsTransport) -> Self {
+        Self {
+            arguments: transport.arguments,
+        }
+    }
+}
+
+impl From<&ArgumentsTransport> for Arguments {
+    fn from(transport: &ArgumentsTransport) -> Self {
+        let transport: ArgumentsTransport = transport.clone();
+        Self::from(transport)
+    }
+}
+
+impl From<&Arguments> for ArgumentsTransport {
+    fn from(arguments: &Arguments) -> Self {
+        let arguments: Arguments = arguments.clone();
+        Self {
+            arguments: arguments.arguments,
+        }
     }
 }
 
@@ -340,21 +497,20 @@ mod tests {
             include_globs: vec![String::from("a/b/**/*.vwx")],
             exclude_globs: vec![String::from("**/c/*.vwx")],
         };
-        let inputs_manifest: FilesManifest<HostFilesystem> =
+        let inputs_manifest: FilesManifest =
             FilesManifest::try_from((&mut host_filesystem, inputs_config))
                 .expect("create inputs manifest");
         assert_eq!(
-            FilesManifest::<HostFilesystem>::from_paths(vec![
-                PathBuf::from("a/n.stu"),
-                PathBuf::from("a/b/d/p.vwx"),
-            ]),
+            FilesManifest::from_paths(
+                vec![PathBuf::from("a/n.stu"), PathBuf::from("a/b/d/p.vwx"),]
+            ),
             inputs_manifest
         );
     }
 
     #[test]
     fn test_outputs_manifest() {
-        let inputs_manifest = FilesManifest::<HostFilesystem>::from_paths(vec![
+        let inputs_manifest = FilesManifest::from_paths(vec![
             PathBuf::from("m.stu"),
             PathBuf::from("a/n.stu"),
             PathBuf::from("a/b/o.stu"),
@@ -387,11 +543,11 @@ mod tests {
             ],
         };
 
-        let outputs_manifest: FilesManifest<HostFilesystem> =
+        let outputs_manifest: FilesManifest =
             FilesManifest::try_from((&inputs_manifest, outputs_config))
                 .expect("create inputs manifest");
         assert_eq!(
-            FilesManifest::<HostFilesystem>::from_paths(vec![
+            FilesManifest::from_paths(vec![
                 PathBuf::from("out/a/b/d/p.out.1"),
                 PathBuf::from("out/a/b/d/p.out.2"),
                 PathBuf::from("out/a/b/p.out.1"),
