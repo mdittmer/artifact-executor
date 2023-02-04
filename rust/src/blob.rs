@@ -1,6 +1,5 @@
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
-use serde::de::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::io::Read;
@@ -147,12 +146,12 @@ impl ReadDeserializer for JSON {
 }
 
 fn read_blob<
-    FS: FilesystemApi,
+    Filesystem: FilesystemApi,
     IdentityScheme: IdentitySchemeApi,
     D: DeserializeOwned,
     RD: ReadDeserializer,
 >(
-    filesystem: &mut FS,
+    filesystem: &mut Filesystem,
     identity: &IdentityScheme::Identity,
 ) -> Result<D, anyhow::Error> {
     let blob_name = PathBuf::from(identity.to_string());
@@ -160,8 +159,12 @@ fn read_blob<
     RD::from_reader(blob_file).map_err(anyhow::Error::from)
 }
 
-fn read_blob_pointer<FS: FilesystemApi, IdentityScheme: IdentitySchemeApi, RD: ReadDeserializer>(
-    filesystem: &mut FS,
+fn read_blob_pointer<
+    Filesystem: FilesystemApi,
+    IdentityScheme: IdentitySchemeApi,
+    RD: ReadDeserializer,
+>(
+    filesystem: &mut Filesystem,
     source_identity: &IdentityScheme::Identity,
 ) -> Result<IdentityScheme::Identity, anyhow::Error>
 where
@@ -169,16 +172,17 @@ where
 {
     let blob_name = PathBuf::from(source_identity.to_string());
     let blob_file = filesystem.open_file_for_read(&blob_name)?;
-    RD::from_reader::<FS::Read, IdentityScheme::Identity>(blob_file).map_err(anyhow::Error::from)
+    RD::from_reader::<Filesystem::Read, IdentityScheme::Identity>(blob_file)
+        .map_err(anyhow::Error::from)
 }
 
 fn write_small_blob<
-    FS: FilesystemApi,
+    Filesystem: FilesystemApi,
     D: Serialize,
     IdentityScheme: IdentitySchemeApi,
     S: StringSerializer,
 >(
-    filesystem: &mut FS,
+    filesystem: &mut Filesystem,
     data: &D,
 ) -> Result<IdentityScheme::Identity, anyhow::Error> {
     let blob_string = S::to_string(data)?;
@@ -190,12 +194,12 @@ fn write_small_blob<
 }
 
 fn write_large_blob<
-    FS: FilesystemApi,
+    Filesystem: FilesystemApi,
     D: Serialize,
     IdentityScheme: IdentitySchemeApi,
     S: WriteSerializer,
 >(
-    filesystem: &mut FS,
+    filesystem: &mut Filesystem,
     data: &D,
 ) -> Result<IdentityScheme::Identity, anyhow::Error> {
     let random_u64: u64 = rand::random();
@@ -215,11 +219,11 @@ fn write_large_blob<
 }
 
 fn write_raw_blob_pointer<
-    FS: FilesystemApi,
+    Filesystem: FilesystemApi,
     IdentityScheme: IdentitySchemeApi,
     S: StringSerializer,
 >(
-    filesystem: &mut FS,
+    filesystem: &mut Filesystem,
     source_identity: &IdentityScheme::Identity,
     destination_identity: &IdentityScheme::Identity,
 ) -> Result<(), anyhow::Error> {
@@ -230,12 +234,12 @@ fn write_raw_blob_pointer<
 }
 
 fn write_small_blob_pointer<
-    FS: FilesystemApi,
+    Filesystem: FilesystemApi,
     D: Serialize,
     IdentityScheme: IdentitySchemeApi,
     S: StringSerializer,
 >(
-    filesystem: &mut FS,
+    filesystem: &mut Filesystem,
     source_data: &D,
     destination_identity: &IdentityScheme::Identity,
 ) -> Result<IdentityScheme::Identity, anyhow::Error> {
@@ -248,13 +252,13 @@ fn write_small_blob_pointer<
 }
 
 fn write_large_blob_pointer<
-    FS: FilesystemApi,
+    Filesystem: FilesystemApi,
     D: Serialize,
     IdentityScheme: IdentitySchemeApi,
     WS: WriteSerializer,
     SS: StringSerializer,
 >(
-    filesystem: &mut FS,
+    filesystem: &mut Filesystem,
     source_data: &D,
     destination_identity: &IdentityScheme::Identity,
 ) -> Result<IdentityScheme::Identity, anyhow::Error> {
@@ -346,12 +350,17 @@ mod tests {
         let a2_read =
             read_blob::<HostFilesystem, ContentSha256, A, JSON>(&mut blob_filesystem, &a2_identity)
                 .expect("read a2");
-        let b2_read =
+        let b1_read =
             read_blob::<HostFilesystem, ContentSha256, B, JSON>(&mut blob_filesystem, &b1_identity)
                 .expect("read b1");
         let b2_read =
             read_blob::<HostFilesystem, ContentSha256, B, JSON>(&mut blob_filesystem, &b2_identity)
                 .expect("read b2");
+
+        assert_eq!(a1, a1_read);
+        assert_eq!(a2, a2_read);
+        assert_eq!(b1, b1_read);
+        assert_eq!(b2, b2_read);
 
         let a1_identity_2 = write_small_blob_pointer::<HostFilesystem, A, ContentSha256, JSON>(
             &mut blob_pointer_filesystem,

@@ -1,5 +1,6 @@
 pub mod args;
 pub mod blob;
+pub mod cache;
 pub mod context;
 pub mod execute;
 pub mod format;

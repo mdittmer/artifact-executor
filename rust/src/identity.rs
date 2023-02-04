@@ -5,7 +5,6 @@ use crate::fs::Filesystem;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::FilesManifest;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use serde::Serialize;
 use sha2::Digest as _;
 use sha2::Sha256 as Sha256Hasher;
@@ -88,14 +87,14 @@ impl IdentityScheme for ContentSha256 {
     }
 }
 
-fn identify_files<FS, Id, IS>(
+fn identify_files<FS, Identity, IS>(
     filesystem: &mut FS,
     files_manifest: &FilesManifest,
-) -> Result<FileIdentitiesManifest<Id>, anyhow::Error>
+) -> Result<FileIdentitiesManifest<Identity>, anyhow::Error>
 where
     FS: Filesystem,
-    Id: Clone + DeserializeOwned + Serialize,
-    IS: IdentityScheme<Identity = Id>,
+    Identity: Clone + DeserializeOwned + Serialize,
+    IS: IdentityScheme<Identity = Identity>,
 {
     FileIdentitiesManifestTransport {
         identity_scheme: <IS as IdentityScheme>::IDENTITY_SCHEME,

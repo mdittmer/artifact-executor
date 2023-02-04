@@ -5,23 +5,22 @@ use crate::manifest::EnvironmentVariables;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Program;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Inputs<'a, Id> {
+pub struct Inputs<'a, Identity> {
     environment_variables: &'a EnvironmentVariables,
     program: &'a Program,
     arguments: &'a Arguments,
-    input_files: &'a FileIdentitiesManifest<Id>,
-    output_files: &'a FileIdentitiesManifest<Id>,
+    input_files: &'a FileIdentitiesManifest<Identity>,
+    output_files: &'a FileIdentitiesManifest<Identity>,
 }
 
-impl<'a, Id> Inputs<'a, Id>
+impl<'a, Identity> Inputs<'a, Identity>
 where
-    Id: Clone + DeserializeOwned + Serialize,
+    Identity: Clone + DeserializeOwned + Serialize,
 {
-    pub fn into_transport(self) -> TaskInput<Id> {
+    pub fn into_transport(self) -> TaskInput<Identity> {
         TaskInput {
             environment_variables: self.environment_variables.as_manifest(),
             program: self.program.into(),
@@ -31,30 +30,30 @@ where
         }
     }
 
-    pub fn as_transport(&self) -> TaskInput<Id> {
+    pub fn as_transport(&self) -> TaskInput<Identity> {
         let self_clone: Self = self.clone();
         self_clone.into_transport()
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Outputs<'a, Id> {
-    input_files_with_program: &'a FileIdentitiesManifest<Id>,
-    output_files: &'a FileIdentitiesManifest<Id>,
+pub struct Outputs<'a, Identity> {
+    input_files_with_program: &'a FileIdentitiesManifest<Identity>,
+    output_files: &'a FileIdentitiesManifest<Identity>,
 }
 
-impl<'a, Id> Outputs<'a, Id>
+impl<'a, Identity> Outputs<'a, Identity>
 where
-    Id: Clone + DeserializeOwned + Serialize,
+    Identity: Clone + DeserializeOwned + Serialize,
 {
-    fn into_transport(self) -> TaskOutput<Id> {
+    fn into_transport(self) -> TaskOutput<Identity> {
         TaskOutput {
             input_files_with_program: self.input_files_with_program.as_transport(),
             output_files: self.output_files.as_transport(),
         }
     }
 
-    pub fn as_transport(&self) -> TaskOutput<Id> {
+    pub fn as_transport(&self) -> TaskOutput<Identity> {
         let self_clone: Self = self.clone();
         self_clone.into_transport()
     }

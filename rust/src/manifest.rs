@@ -5,17 +5,91 @@ use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::format::FilesManifest as FilesManifestTransport;
 use crate::format::IdentityScheme;
 use crate::format::Inputs as InputsConfig;
+use crate::format::Listing as ListingTransport;
 use crate::format::Match;
 use crate::format::MatchTransform;
 use crate::format::Outputs as OutputsConfig;
 use crate::format::Program as ProgramTransport;
 use crate::fs::Filesystem as FilesystemApi;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::path::PathBuf;
 use std::slice::Iter;
+
+#[derive(Clone, Debug)]
+pub struct Listing<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize> {
+    entries: HashSet<Identity>,
+}
+
+impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize> Listing<Identity> {
+    pub fn into_transport(self) -> ListingTransport<Identity> {
+        let mut entries: Vec<_> = self.entries.into_iter().collect();
+        entries.sort();
+        ListingTransport { entries }
+    }
+
+    pub fn as_transport(&self) -> ListingTransport<Identity> {
+        let self_clone: Self = self.clone();
+        self_clone.into_transport()
+    }
+
+    pub fn put(&mut self, identity: Identity) -> bool {
+        if self.entries.contains(&identity) {
+            false
+        } else {
+            self.entries.insert(identity);
+            true
+        }
+    }
+
+    pub fn remove(&mut self, identity: &Identity) -> bool {
+        self.entries.remove(identity)
+    }
+}
+
+impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize>
+    TryFrom<ListingTransport<Identity>> for Listing<Identity>
+{
+    type Error = anyhow::Error;
+
+    fn try_from(mut transport: ListingTransport<Identity>) -> Result<Self, Self::Error> {
+        let input = transport.entries.clone();
+        transport.entries.sort();
+        let sorted = transport.entries;
+        if input != sorted {
+            return Err(
+                anyhow::anyhow!("listing not sorted").context(diff_items_to_string(
+                    "input vs. sorted",
+                    &input,
+                    &sorted,
+                )),
+            );
+        }
+        let deduped: HashSet<_> = sorted.clone().into_iter().collect();
+        let deduped: Vec<_> = deduped.into_iter().collect();
+        if sorted != deduped {
+            return Err(anyhow::anyhow!("listing contains duplicates").context(
+                diff_items_to_string("sorted vs. sorted+deduped", &sorted, &deduped),
+            ));
+        }
+        let entries: HashSet<_> = sorted.clone().into_iter().collect();
+        Ok(Self { entries })
+    }
+}
+
+impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize>
+    TryFrom<&ListingTransport<Identity>> for Listing<Identity>
+{
+    type Error = anyhow::Error;
+
+    fn try_from(transport: &ListingTransport<Identity>) -> Result<Self, Self::Error> {
+        let transport: ListingTransport<Identity> = transport.clone();
+        Listing::try_from(transport)
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilesManifest {
@@ -215,34 +289,34 @@ impl TryFrom<(&FilesManifest, &OutputsConfig)> for FilesManifest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FileIdentitiesManifest<Id> {
+pub struct FileIdentitiesManifest<Identity> {
     identity_scheme: IdentityScheme,
-    identities: Vec<(PathBuf, Option<Id>)>,
+    identities: Vec<(PathBuf, Option<Identity>)>,
 }
 
-impl<Id> FileIdentitiesManifest<Id>
+impl<Identity> FileIdentitiesManifest<Identity>
 where
-    Id: Clone + DeserializeOwned + Serialize,
+    Identity: Clone + DeserializeOwned + Serialize,
 {
-    pub fn into_transport(self) -> FileIdentitiesManifestTransport<Id> {
+    pub fn into_transport(self) -> FileIdentitiesManifestTransport<Identity> {
         FileIdentitiesManifestTransport {
             identity_scheme: self.identity_scheme,
             identities: self.identities,
         }
     }
 
-    pub fn as_transport(&self) -> FileIdentitiesManifestTransport<Id> {
+    pub fn as_transport(&self) -> FileIdentitiesManifestTransport<Identity> {
         let self_clone: Self = self.clone();
         self_clone.into_transport()
     }
 }
 
 #[cfg(test)]
-impl<Id> FileIdentitiesManifest<Id>
+impl<Identity> FileIdentitiesManifest<Identity>
 where
-    Id: Clone + DeserializeOwned + Serialize,
+    Identity: Clone + DeserializeOwned + Serialize,
 {
-    pub fn from_transport(mut transport: FileIdentitiesManifestTransport<Id>) -> Self {
+    pub fn from_transport(mut transport: FileIdentitiesManifestTransport<Identity>) -> Self {
         transport
             .identities
             .sort_by(|(path1, _), (path2, _)| path1.cmp(path2));
@@ -252,19 +326,22 @@ where
         }
     }
 
-    pub fn from_borrowed_transport(transport: &FileIdentitiesManifestTransport<Id>) -> Self {
-        let transport: FileIdentitiesManifestTransport<Id> = transport.clone();
+    pub fn from_borrowed_transport(transport: &FileIdentitiesManifestTransport<Identity>) -> Self {
+        let transport: FileIdentitiesManifestTransport<Identity> = transport.clone();
         FileIdentitiesManifest::from_transport(transport)
     }
 }
 
-impl<Id> TryFrom<FileIdentitiesManifestTransport<Id>> for FileIdentitiesManifest<Id>
+impl<Identity> TryFrom<FileIdentitiesManifestTransport<Identity>>
+    for FileIdentitiesManifest<Identity>
 where
-    Id: Clone + DeserializeOwned + Serialize,
+    Identity: Clone + DeserializeOwned + Serialize,
 {
     type Error = anyhow::Error;
 
-    fn try_from(transport: FileIdentitiesManifestTransport<Id>) -> Result<Self, anyhow::Error> {
+    fn try_from(
+        transport: FileIdentitiesManifestTransport<Identity>,
+    ) -> Result<Self, anyhow::Error> {
         let stated_paths: Vec<_> = transport.identities.iter().map(|(path, _)| path).collect();
         let mut sorted_paths: Vec<_> = transport.identities.iter().map(|(path, _)| path).collect();
         sorted_paths.sort();
@@ -288,14 +365,17 @@ where
     }
 }
 
-impl<Id> TryFrom<&FileIdentitiesManifestTransport<Id>> for FileIdentitiesManifest<Id>
+impl<Identity> TryFrom<&FileIdentitiesManifestTransport<Identity>>
+    for FileIdentitiesManifest<Identity>
 where
-    Id: Clone + DeserializeOwned + Serialize,
+    Identity: Clone + DeserializeOwned + Serialize,
 {
     type Error = anyhow::Error;
 
-    fn try_from(transport: &FileIdentitiesManifestTransport<Id>) -> Result<Self, anyhow::Error> {
-        let transport: FileIdentitiesManifestTransport<Id> = transport.clone();
+    fn try_from(
+        transport: &FileIdentitiesManifestTransport<Identity>,
+    ) -> Result<Self, anyhow::Error> {
+        let transport: FileIdentitiesManifestTransport<Identity> = transport.clone();
         Self::try_from(transport)
     }
 }
