@@ -8,34 +8,23 @@ use crate::format::Inputs as InputsConfig;
 use crate::format::Listing as ListingTransport;
 use crate::format::Match;
 use crate::format::MatchTransform;
+use crate::format::Metadata as MetadataTransport;
 use crate::format::Outputs as OutputsConfig;
 use crate::format::Program as ProgramTransport;
+use crate::format::System as SystemTransport;
 use crate::fs::Filesystem as FilesystemApi;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use crate::identity::Identity as IdentityBound;
+use crate::identity::IntoTransport;
 use std::collections::HashSet;
-use std::fmt::Debug;
-use std::hash::Hash;
 use std::path::PathBuf;
 use std::slice::Iter;
 
 #[derive(Clone, Debug)]
-pub struct Listing<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize> {
+pub struct Listing<Identity: IdentityBound> {
     entries: HashSet<Identity>,
 }
 
-impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize> Listing<Identity> {
-    pub fn into_transport(self) -> ListingTransport<Identity> {
-        let mut entries: Vec<_> = self.entries.into_iter().collect();
-        entries.sort();
-        ListingTransport { entries }
-    }
-
-    pub fn as_transport(&self) -> ListingTransport<Identity> {
-        let self_clone: Self = self.clone();
-        self_clone.into_transport()
-    }
-
+impl<Identity: IdentityBound> Listing<Identity> {
     pub fn put(&mut self, identity: Identity) -> bool {
         if self.entries.contains(&identity) {
             false
@@ -50,9 +39,25 @@ impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize> Listin
     }
 }
 
-impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize>
-    TryFrom<ListingTransport<Identity>> for Listing<Identity>
-{
+impl<Identity: IdentityBound> IntoTransport for Listing<Identity> {
+    type Transport = ListingTransport<Identity>;
+
+    fn into_transport(self) -> Self::Transport {
+        let mut entries: Vec<_> = self.entries.into_iter().collect();
+        entries.sort();
+        Self::Transport { entries }
+    }
+}
+
+impl<Identity: IdentityBound> Default for Listing<Identity> {
+    fn default() -> Self {
+        Self {
+            entries: HashSet::new(),
+        }
+    }
+}
+
+impl<Identity: IdentityBound> TryFrom<ListingTransport<Identity>> for Listing<Identity> {
     type Error = anyhow::Error;
 
     fn try_from(mut transport: ListingTransport<Identity>) -> Result<Self, Self::Error> {
@@ -80,9 +85,7 @@ impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize>
     }
 }
 
-impl<Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize>
-    TryFrom<&ListingTransport<Identity>> for Listing<Identity>
-{
+impl<Identity: IdentityBound> TryFrom<&ListingTransport<Identity>> for Listing<Identity> {
     type Error = anyhow::Error;
 
     fn try_from(transport: &ListingTransport<Identity>) -> Result<Self, Self::Error> {
@@ -113,17 +116,16 @@ impl FilesManifest {
         Self { paths }
     }
 
-    pub fn into_transport(self) -> FilesManifestTransport {
-        FilesManifestTransport { paths: self.paths }
-    }
-
-    pub fn as_transport(&self) -> FilesManifestTransport {
-        let self_clone: Self = self.clone();
-        self_clone.into_transport()
-    }
-
     pub fn iter(&self) -> Iter<'_, PathBuf> {
         self.paths.iter()
+    }
+}
+
+impl IntoTransport for FilesManifest {
+    type Transport = FilesManifestTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport { paths: self.paths }
     }
 }
 
@@ -294,27 +296,24 @@ pub struct FileIdentitiesManifest<Identity> {
     identities: Vec<(PathBuf, Option<Identity>)>,
 }
 
-impl<Identity> FileIdentitiesManifest<Identity>
+impl<Identity> IntoTransport for FileIdentitiesManifest<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
-    pub fn into_transport(self) -> FileIdentitiesManifestTransport<Identity> {
-        FileIdentitiesManifestTransport {
+    type Transport = FileIdentitiesManifestTransport<Identity>;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
             identity_scheme: self.identity_scheme,
             identities: self.identities,
         }
-    }
-
-    pub fn as_transport(&self) -> FileIdentitiesManifestTransport<Identity> {
-        let self_clone: Self = self.clone();
-        self_clone.into_transport()
     }
 }
 
 #[cfg(test)]
 impl<Identity> FileIdentitiesManifest<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     pub fn from_transport(mut transport: FileIdentitiesManifestTransport<Identity>) -> Self {
         transport
@@ -335,7 +334,7 @@ where
 impl<Identity> TryFrom<FileIdentitiesManifestTransport<Identity>>
     for FileIdentitiesManifest<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     type Error = anyhow::Error;
 
@@ -368,7 +367,7 @@ where
 impl<Identity> TryFrom<&FileIdentitiesManifestTransport<Identity>>
     for FileIdentitiesManifest<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     type Error = anyhow::Error;
 
@@ -536,6 +535,54 @@ impl From<&Arguments> for ArgumentsTransport {
         let arguments: Arguments = arguments.clone();
         Self {
             arguments: arguments.arguments,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Metadata<Identity: IdentityBound> {
+    inputs_identity: Identity,
+    outputs_identity: Identity,
+    timestamp_nanos: i64,
+    execution_duration_nanos: u128,
+    system: System,
+}
+
+impl<Identity: IdentityBound> IntoTransport for Metadata<Identity> {
+    type Transport = MetadataTransport<Identity>;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            inputs_identity: self.inputs_identity,
+            outputs_identity: self.outputs_identity,
+            timestamp_nanos: self.timestamp_nanos,
+            execution_duration_nanos: self.execution_duration_nanos,
+            system: self.system.into_transport(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct System {
+    name: Option<String>,
+    long_os_version: Option<String>,
+    kernel_version: Option<String>,
+    distribution_id: String,
+    total_memory: u64,
+    estimated_num_cpu_cores: usize,
+}
+
+impl IntoTransport for System {
+    type Transport = SystemTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            name: self.name,
+            long_os_version: self.long_os_version,
+            kernel_version: self.kernel_version,
+            distribution_id: self.distribution_id,
+            total_memory: self.total_memory,
+            estimated_num_cpu_cores: self.estimated_num_cpu_cores,
         }
     }
 }

@@ -2,6 +2,7 @@ pub mod args;
 pub mod blob;
 pub mod cache;
 pub mod context;
+pub mod error;
 pub mod execute;
 pub mod format;
 pub mod fs;

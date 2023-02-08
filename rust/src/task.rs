@@ -1,11 +1,12 @@
 use crate::format::TaskInput;
 use crate::format::TaskOutput;
+use crate::identity::AsTransport as _;
+use crate::identity::Identity as IdentityBound;
+use crate::identity::IntoTransport;
 use crate::manifest::Arguments;
 use crate::manifest::EnvironmentVariables;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Program;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inputs<'a, Identity> {
@@ -16,23 +17,20 @@ pub struct Inputs<'a, Identity> {
     output_files: &'a FileIdentitiesManifest<Identity>,
 }
 
-impl<'a, Identity> Inputs<'a, Identity>
+impl<'a, Identity> IntoTransport for Inputs<'a, Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
-    pub fn into_transport(self) -> TaskInput<Identity> {
-        TaskInput {
+    type Transport = TaskInput<Identity>;
+
+    fn into_transport(self) -> TaskInput<Identity> {
+        Self::Transport {
             environment_variables: self.environment_variables.as_manifest(),
             program: self.program.into(),
             arguments: self.arguments.into(),
             input_files: self.input_files.as_transport(),
             output_files: self.output_files.as_transport(),
         }
-    }
-
-    pub fn as_transport(&self) -> TaskInput<Identity> {
-        let self_clone: Self = self.clone();
-        self_clone.into_transport()
     }
 }
 
@@ -44,7 +42,7 @@ pub struct Outputs<'a, Identity> {
 
 impl<'a, Identity> Outputs<'a, Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     fn into_transport(self) -> TaskOutput<Identity> {
         TaskOutput {
@@ -56,5 +54,19 @@ where
     pub fn as_transport(&self) -> TaskOutput<Identity> {
         let self_clone: Self = self.clone();
         self_clone.into_transport()
+    }
+}
+
+impl<'a, Identity> IntoTransport for Outputs<'a, Identity>
+where
+    Identity: IdentityBound,
+{
+    type Transport = TaskOutput<Identity>;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            input_files_with_program: self.input_files_with_program.as_transport(),
+            output_files: self.output_files.as_transport(),
+        }
     }
 }

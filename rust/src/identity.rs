@@ -2,16 +2,23 @@ use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::format::IdentityScheme as IdentitySchemeEnum;
 use crate::format::Sha256;
 use crate::fs::Filesystem;
+use crate::identity::Identity as IdentityBound;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::FilesManifest;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::Digest as _;
 use sha2::Sha256 as Sha256Hasher;
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::path::Path;
 
+pub trait Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize + ToString {}
+
+impl<T: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize + ToString> Identity for T {}
+
 pub trait IdentityScheme {
-    type Identity: DeserializeOwned + Serialize + ToString;
+    type Identity: Identity;
 
     const IDENTITY_SCHEME: IdentitySchemeEnum;
 
@@ -93,7 +100,7 @@ fn identify_files<FS, Identity, IS>(
 ) -> Result<FileIdentitiesManifest<Identity>, anyhow::Error>
 where
     FS: Filesystem,
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
     IS: IdentityScheme<Identity = Identity>,
 {
     FileIdentitiesManifestTransport {
@@ -104,6 +111,27 @@ where
             .collect(),
     }
     .try_into()
+}
+
+pub trait IntoTransport {
+    type Transport: DeserializeOwned + Serialize;
+
+    fn into_transport(self) -> Self::Transport;
+}
+
+pub trait AsTransport {
+    type Transport: DeserializeOwned + Serialize;
+
+    fn as_transport(&self) -> Self::Transport;
+}
+
+impl<T: Clone + IntoTransport> AsTransport for T {
+    type Transport = <Self as IntoTransport>::Transport;
+
+    fn as_transport(&self) -> Self::Transport {
+        let self_clone: Self = self.clone();
+        self_clone.into_transport()
+    }
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use crate::error::Error as ErrorBound;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
 use serde::de::DeserializeOwned;
@@ -12,9 +13,17 @@ use std::path::PathBuf;
 pub struct BlobCache<
     Filesystem: FilesystemApi,
     IdentityScheme: IdentitySchemeApi,
-    Serialization: StringSerializer + WriteSerializer + ReadDeserializer,
+    Serialization: WriteSerializer + ReadDeserializer,
 > {
     blobs: Filesystem,
+    _marker: PhantomData<(IdentityScheme, Serialization)>,
+}
+
+pub struct BlobPointerCache<
+    Filesystem: FilesystemApi,
+    IdentityScheme: IdentitySchemeApi,
+    Serialization: StringSerializer + WriteSerializer + ReadDeserializer,
+> {
     blob_pointers: Filesystem,
     _marker: PhantomData<(IdentityScheme, Serialization)>,
 }
@@ -25,10 +34,9 @@ impl<
         Serialization: StringSerializer + WriteSerializer + ReadDeserializer,
     > BlobCache<Filesystem, IdentityScheme, Serialization>
 {
-    pub fn new(blobs: Filesystem, blob_pointers: Filesystem) -> Self {
+    pub fn new(blobs: Filesystem) -> Self {
         Self {
             blobs,
-            blob_pointers,
             _marker: PhantomData,
         }
     }
@@ -38,16 +46,6 @@ impl<
         identity: &IdentityScheme::Identity,
     ) -> anyhow::Result<D> {
         read_blob::<Filesystem, IdentityScheme, D, Serialization>(&mut self.blobs, identity)
-    }
-
-    pub fn read_blob_pointer(
-        &mut self,
-        source_identity: &IdentityScheme::Identity,
-    ) -> anyhow::Result<IdentityScheme::Identity> {
-        read_blob_pointer::<Filesystem, IdentityScheme, Serialization>(
-            &mut self.blob_pointers,
-            source_identity,
-        )
     }
 
     pub fn write_small_blob<D: Serialize>(
@@ -62,6 +60,30 @@ impl<
         data: &D,
     ) -> anyhow::Result<IdentityScheme::Identity> {
         write_large_blob::<Filesystem, D, IdentityScheme, Serialization>(&mut self.blobs, data)
+    }
+}
+
+impl<
+        Filesystem: FilesystemApi,
+        IdentityScheme: IdentitySchemeApi,
+        Serialization: StringSerializer + WriteSerializer + ReadDeserializer,
+    > BlobPointerCache<Filesystem, IdentityScheme, Serialization>
+{
+    pub fn new(blob_pointers: Filesystem) -> Self {
+        Self {
+            blob_pointers,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn read_blob_pointer(
+        &mut self,
+        source_identity: &IdentityScheme::Identity,
+    ) -> anyhow::Result<IdentityScheme::Identity> {
+        read_blob_pointer::<Filesystem, IdentityScheme, Serialization>(
+            &mut self.blob_pointers,
+            source_identity,
+        )
     }
 
     pub fn write_small_blob_pointer<D: Serialize>(
@@ -102,19 +124,19 @@ impl<
 }
 
 pub trait StringSerializer {
-    type Error: 'static + std::error::Error + Send + Sync;
+    type Error: ErrorBound;
 
     fn to_string<D: Serialize>(data: &D) -> Result<String, Self::Error>;
 }
 
 pub trait WriteSerializer {
-    type Error: 'static + std::error::Error + Send + Sync;
+    type Error: ErrorBound;
 
     fn to_writer<W: Write, D: Serialize>(writer: W, data: &D) -> Result<(), Self::Error>;
 }
 
 pub trait ReadDeserializer {
-    type Error: 'static + std::error::Error + Send + Sync;
+    type Error: ErrorBound;
 
     fn from_reader<R: Read, D: DeserializeOwned>(reader: R) -> Result<D, Self::Error>;
 }

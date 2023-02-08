@@ -1,3 +1,4 @@
+use crate::error::Error as ErrorBound;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
@@ -5,17 +6,16 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
 
-pub trait Filesystem: Sized {
+pub trait Filesystem: Clone + Sized {
     type Read: Read;
     type Write: Write;
-    type InternalError;
-    type IoError: 'static + std::error::Error + Send + Sync;
-    type PatternError: 'static + std::error::Error + Send + Sync;
-    type GlobError: 'static + std::error::Error + Send + Sync;
+    type IoError: ErrorBound;
+    type PatternError: ErrorBound;
+    type GlobError: ErrorBound;
 
-    fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P)
-        -> Result<Self, Self::InternalError>;
+    fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P) -> Result<Self, anyhow::Error>;
 
     fn open_file_for_read<P: AsRef<Path>>(&mut self, path: P) -> Result<Self::Read, Self::IoError>;
 
@@ -89,15 +89,11 @@ impl HostFilesystem {
 impl Filesystem for HostFilesystem {
     type Read = File;
     type Write = File;
-    type InternalError = anyhow::Error;
     type IoError = std::io::Error;
     type PatternError = glob::PatternError;
     type GlobError = glob::GlobError;
 
-    fn sub_system<P: AsRef<Path>>(
-        &mut self,
-        sub_directory: P,
-    ) -> Result<Self, Self::InternalError> {
+    fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P) -> Result<Self, anyhow::Error> {
         let working_directory = self.working_directory.clone();
         let sub_working_directory = self
             .get_absolute_path(&working_directory)

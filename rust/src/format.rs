@@ -1,3 +1,4 @@
+use crate::identity::Identity as IdentityBound;
 use anyhow::Context as _;
 use serde::de::DeserializeOwned;
 use serde::de::Deserializer;
@@ -8,6 +9,7 @@ use serde::Serialize;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::path::PathBuf;
+use sysinfo::SystemExt;
 
 //
 // Input formats
@@ -187,29 +189,29 @@ impl<'de> Deserialize<'de> for Sha256 {
 //
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: Clone + DeserializeOwned + Ord + Serialize")]
+#[serde(bound = "Identity: IdentityBound")]
 pub struct Listing<Identity>
 where
-    Identity: Clone + DeserializeOwned + Ord + Serialize,
+    Identity: IdentityBound,
 {
     pub entries: Vec<Identity>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
+#[serde(bound = "Identity: IdentityBound")]
 pub struct TaskSummary<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     pub input: TaskInput<Identity>,
     pub output: TaskOutput<Identity>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
+#[serde(bound = "Identity: IdentityBound")]
 pub struct TaskInput<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     #[serde(flatten)]
     pub environment_variables: EnvironmentVariables,
@@ -222,10 +224,10 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
+#[serde(bound = "Identity: IdentityBound")]
 pub struct TaskOutput<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     pub input_files_with_program: FileIdentitiesManifest<Identity>,
     pub output_files: FileIdentitiesManifest<Identity>,
@@ -240,8 +242,46 @@ pub struct FilesManifest {
 #[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
 pub struct FileIdentitiesManifest<Identity>
 where
-    Identity: Clone + DeserializeOwned + Serialize,
+    Identity: IdentityBound,
 {
     pub identity_scheme: IdentityScheme,
     pub identities: Vec<(PathBuf, Option<Identity>)>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
+pub struct Metadata<Identity>
+where
+    Identity: IdentityBound,
+{
+    pub inputs_identity: Identity,
+    pub outputs_identity: Identity,
+    pub timestamp_nanos: i64,
+    pub execution_duration_nanos: u128,
+    pub system: System,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct System {
+    pub name: Option<String>,
+    pub long_os_version: Option<String>,
+    pub kernel_version: Option<String>,
+    pub distribution_id: String,
+    pub total_memory: u64,
+    pub estimated_num_cpu_cores: usize,
+}
+
+impl From<sysinfo::System> for System {
+    fn from(system: sysinfo::System) -> Self {
+        Self {
+            name: system.name(),
+            long_os_version: system.long_os_version(),
+            kernel_version: system.kernel_version(),
+            distribution_id: system.distribution_id(),
+            total_memory: system.total_memory(),
+            estimated_num_cpu_cores: system
+                .physical_core_count()
+                .unwrap_or_else(|| system.cpus().len()),
+        }
+    }
 }
