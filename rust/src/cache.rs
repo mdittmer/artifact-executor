@@ -4,6 +4,7 @@ use crate::blob::ReadDeserializer as ReadDeserializerApi;
 use crate::blob::StringSerializer as StringSerializerApi;
 use crate::blob::WriteSerializer as WriteSerializerApi;
 use crate::format::Listing as ListingTransport;
+use crate::fs::copy_file_to;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::AsTransport;
 use crate::identity::Identity as IdentityBound;
@@ -12,10 +13,14 @@ use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Listing;
 use crate::manifest::Metadata;
 use crate::task::Inputs;
+use crate::task::Outputs;
+use serde::de::DeserializeOwned;
 use std::convert::TryFrom;
 use std::marker::PhantomData;
 use std::path::Path;
 use std::path::PathBuf;
+use sysinfo::System;
+use sysinfo::SystemExt;
 
 pub trait Index: Sized {
     type Filesystem: FilesystemApi;
@@ -143,6 +148,7 @@ pub struct Cache<
     Serialization: ReadDeserializerApi + StringSerializerApi + WriteSerializerApi,
     Idx: Index<Filesystem = Filesystem, Identity = IdentityScheme::Identity, Error = anyhow::Error>,
 > {
+    system: System,
     index: Idx,
     blob_cache: BlobCache<Filesystem, IdentityScheme, Serialization>,
     metadata_pointer_cache: BlobPointerCache<Filesystem, IdentityScheme, Serialization>,
@@ -159,15 +165,17 @@ impl<
     pub const DEFAULT_BLOBS_SUBDIR: &str = "blobs";
     pub const DEFAULT_METADATA_POINTERS_SUBDIR: &str = "metadata";
     pub const DEFAULT_OUTPUTS_POINTERS_SUBDIR: &str = "outputs";
-    pub const DEFAULT_INPUTS_LISTING_FILE: &str = "inputs.json";
+    pub const DEFAULT_INPUTS_LISTING_FILE: &str = "inputs.listing";
 
     pub fn new(
+        system: System,
         index: Idx,
         blob_cache: BlobCache<Filesystem, IdentityScheme, Serialization>,
         metadata_pointer_cache: BlobPointerCache<Filesystem, IdentityScheme, Serialization>,
         outputs_pointer_cache: BlobPointerCache<Filesystem, IdentityScheme, Serialization>,
     ) -> Self {
         Self {
+            system,
             index,
             blob_cache,
             metadata_pointer_cache,
@@ -190,6 +198,7 @@ impl<
     }
 
     fn create_or_open_internal(mut filesystem: Filesystem, index: Idx) -> anyhow::Result<Self> {
+        let system = sysinfo::System::new();
         let blob_filesystem = filesystem.sub_system(Self::DEFAULT_BLOBS_SUBDIR)?;
         let metadata_pointer_filesystem =
             filesystem.sub_system(Self::DEFAULT_METADATA_POINTERS_SUBDIR)?;
@@ -200,10 +209,93 @@ impl<
         let outputs_pointer_cache = BlobPointerCache::new(outputs_pointer_filesystem);
 
         Ok(Self {
+            system,
             index,
             blob_cache,
             metadata_pointer_cache,
             outputs_pointer_cache,
         })
+    }
+
+    pub fn put_task<'a>(
+        &mut self,
+        timestamp_nanos: i64,
+        execution_duration_nanos: u128,
+        inputs: Inputs<'a, IdentityScheme::Identity>,
+        outputs: Outputs<'a, IdentityScheme::Identity>,
+    ) -> anyhow::Result<()> {
+        let metadata = Metadata::new(
+            timestamp_nanos,
+            execution_duration_nanos,
+            (&self.system).into(),
+        );
+
+        let inputs_identity = self.blob_cache.write_small_blob(&inputs.as_transport())?;
+        self.index.put(inputs_identity.clone());
+
+        let outputs_identity = self.blob_cache.write_small_blob(&inputs.as_transport())?;
+        self.outputs_pointer_cache
+            .write_raw_blob_pointer(&inputs_identity, &outputs_identity)?;
+
+        let metadata_identity = self.blob_cache.write_small_blob(&metadata.as_transport())?;
+        self.metadata_pointer_cache
+            .write_raw_blob_pointer(&inputs_identity, &metadata_identity)?;
+
+        Ok(())
+    }
+
+    pub fn put_blobs<'a>(
+        &mut self,
+        filesystem: &mut Filesystem,
+        file_identities_manifest: &FileIdentitiesManifest<IdentityScheme::Identity>,
+    ) -> anyhow::Result<()> {
+        for (path, identity) in file_identities_manifest.identities() {
+            if let Some(identity) = identity {
+                let mut blob_reader = filesystem.open_file_for_read(path)?;
+                self.blob_cache.copy_blob(blob_reader, identity)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_metadata(
+        &mut self,
+        inputs_identity: &IdentityScheme::Identity,
+    ) -> anyhow::Result<Option<Metadata>> {
+        match self
+            .metadata_pointer_cache
+            .read_blob_pointer(inputs_identity)
+        {
+            Err(_) => Ok(None),
+            Ok(metadata_identity) => {
+                let metadata_transport = self
+                    .blob_cache
+                    .read_blob::<crate::format::Metadata>(&metadata_identity)?;
+                Ok(Some(metadata_transport.into()))
+            }
+        }
+    }
+
+    pub fn get_outputs(
+        &mut self,
+        inputs_identity: &IdentityScheme::Identity,
+    ) -> anyhow::Result<Option<FileIdentitiesManifest<IdentityScheme::Identity>>> {
+        match self
+            .outputs_pointer_cache
+            .read_blob_pointer(inputs_identity)
+        {
+            Err(_) => Ok(None),
+            Ok(outputs_identity) => {
+                let outputs_transport = self
+                    .blob_cache
+                    .read_blob::<crate::format::FileIdentitiesManifest<IdentityScheme::Identity>>(
+                        &outputs_identity,
+                    )?;
+                let outputs = FileIdentitiesManifest::<IdentityScheme::Identity>::try_from(
+                    outputs_transport,
+                )?;
+                Ok(Some(outputs))
+            }
+        }
     }
 }

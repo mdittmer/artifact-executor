@@ -61,6 +61,14 @@ impl<
     ) -> anyhow::Result<IdentityScheme::Identity> {
         write_large_blob::<Filesystem, D, IdentityScheme, Serialization>(&mut self.blobs, data)
     }
+
+    pub fn copy_blob<R: Read>(
+        &mut self,
+        reader: R,
+        identity: &IdentityScheme::Identity,
+    ) -> anyhow::Result<()> {
+        copy_blob::<Filesystem, IdentityScheme, R>(&mut self.blobs, reader, identity)
+    }
 }
 
 impl<
@@ -238,6 +246,31 @@ fn write_large_blob<
         .move_from_to(&temporary_blob_name, &blob_name)
         .map_err(anyhow::Error::from)?;
     Ok(identity)
+}
+
+fn copy_blob<Filesystem: FilesystemApi, IdentityScheme: IdentitySchemeApi, R: Read>(
+    filesystem: &mut Filesystem,
+    mut blob: R,
+    identity: &IdentityScheme::Identity,
+) -> Result<(), anyhow::Error> {
+    let blob_name = PathBuf::from(identity.to_string());
+
+    {
+        let mut blob_file = filesystem.open_file_for_write(&blob_name)?;
+        std::io::copy(&mut blob, &mut blob_file)?;
+    }
+
+    let blob_file = filesystem.open_file_for_read(&blob_name)?;
+    let computed_identity = IdentityScheme::identify_file(filesystem, &blob_name)?;
+    if identity != &computed_identity {
+        anyhow::bail!(
+            "attempted to copy blob identified as {:?}, but computed identity is {:?}",
+            identity,
+            computed_identity
+        );
+    }
+
+    Ok(())
 }
 
 fn write_raw_blob_pointer<

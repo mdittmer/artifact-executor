@@ -249,13 +249,7 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
-pub struct Metadata<Identity>
-where
-    Identity: IdentityBound,
-{
-    pub inputs_identity: Identity,
-    pub outputs_identity: Identity,
+pub struct Metadata {
     pub timestamp_nanos: i64,
     pub execution_duration_nanos: u128,
     pub system: System,

@@ -1,3 +1,5 @@
+use sysinfo::SystemExt;
+
 use crate::context::diff_items_to_string;
 use crate::format::Arguments as ArgumentsTransport;
 use crate::format::EnvironmentVariables as EnvironmentVariablesTransport;
@@ -296,6 +298,15 @@ pub struct FileIdentitiesManifest<Identity> {
     identities: Vec<(PathBuf, Option<Identity>)>,
 }
 
+impl<Identity> FileIdentitiesManifest<Identity>
+where
+    Identity: IdentityBound,
+{
+    pub fn identities(&self) -> impl Iterator<Item = &(PathBuf, Option<Identity>)> {
+        self.identities.iter()
+    }
+}
+
 impl<Identity> IntoTransport for FileIdentitiesManifest<Identity>
 where
     Identity: IdentityBound,
@@ -540,21 +551,37 @@ impl From<&Arguments> for ArgumentsTransport {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Metadata<Identity: IdentityBound> {
-    inputs_identity: Identity,
-    outputs_identity: Identity,
+pub struct Metadata {
     timestamp_nanos: i64,
     execution_duration_nanos: u128,
     system: System,
 }
 
-impl<Identity: IdentityBound> IntoTransport for Metadata<Identity> {
-    type Transport = MetadataTransport<Identity>;
+impl Metadata {
+    pub fn new(timestamp_nanos: i64, execution_duration_nanos: u128, system: System) -> Self {
+        Self {
+            timestamp_nanos,
+            execution_duration_nanos,
+            system,
+        }
+    }
+}
+
+impl From<MetadataTransport> for Metadata {
+    fn from(transport: MetadataTransport) -> Self {
+        Self {
+            timestamp_nanos: transport.timestamp_nanos,
+            execution_duration_nanos: transport.execution_duration_nanos,
+            system: transport.system.into(),
+        }
+    }
+}
+
+impl IntoTransport for Metadata {
+    type Transport = MetadataTransport;
 
     fn into_transport(self) -> Self::Transport {
         Self::Transport {
-            inputs_identity: self.inputs_identity,
-            outputs_identity: self.outputs_identity,
             timestamp_nanos: self.timestamp_nanos,
             execution_duration_nanos: self.execution_duration_nanos,
             system: self.system.into_transport(),
@@ -570,6 +597,34 @@ pub struct System {
     distribution_id: String,
     total_memory: u64,
     estimated_num_cpu_cores: usize,
+}
+
+impl From<&sysinfo::System> for System {
+    fn from(system: &sysinfo::System) -> Self {
+        System {
+            name: system.name(),
+            long_os_version: system.long_os_version(),
+            kernel_version: system.kernel_version(),
+            distribution_id: system.distribution_id(),
+            total_memory: system.total_memory(),
+            estimated_num_cpu_cores: system
+                .physical_core_count()
+                .unwrap_or_else(|| system.cpus().len()),
+        }
+    }
+}
+
+impl From<SystemTransport> for System {
+    fn from(transport: SystemTransport) -> Self {
+        System {
+            name: transport.name,
+            long_os_version: transport.long_os_version,
+            kernel_version: transport.kernel_version,
+            distribution_id: transport.distribution_id,
+            total_memory: transport.total_memory,
+            estimated_num_cpu_cores: transport.estimated_num_cpu_cores,
+        }
+    }
 }
 
 impl IntoTransport for System {

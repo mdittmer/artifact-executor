@@ -250,6 +250,27 @@ pub fn copy_file<
     Ok(())
 }
 
+pub fn copy_file_to<
+    SourceFilesystem: Filesystem,
+    DestinationFilesystem: Filesystem,
+    SourcePath: AsRef<Path>,
+    DestinationPath: AsRef<Path>,
+>(
+    source_filesystem: &mut SourceFilesystem,
+    destination_filesystem: &mut DestinationFilesystem,
+    source_path: SourcePath,
+    destination_path: DestinationPath,
+) -> Result<(), IoError<SourceFilesystem, DestinationFilesystem>> {
+    let mut source = source_filesystem
+        .open_file_for_read(source_path.as_ref())
+        .map_err(IoError::SourceError)?;
+    let mut destination = destination_filesystem
+        .open_file_for_write(destination_path.as_ref())
+        .map_err(IoError::DestinationError)?;
+    std::io::copy(&mut source, &mut destination).map_err(IoError::IoError)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::relativize_path;
