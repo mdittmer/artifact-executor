@@ -241,7 +241,7 @@ impl<
         self.metadata_pointer_cache
             .write_raw_blob_pointer(&inputs_identity, &metadata_identity)?;
 
-        Ok(())
+        self.index.flush()
     }
 
     pub fn put_blobs<'a>(
@@ -260,11 +260,11 @@ impl<
 
     pub fn get_metadata(
         &mut self,
-        inputs_identity: &IdentityScheme::Identity,
+        task_inputs_identity: &IdentityScheme::Identity,
     ) -> anyhow::Result<Option<Metadata>> {
         match self
             .metadata_pointer_cache
-            .read_blob_pointer(inputs_identity)
+            .read_blob_pointer(task_inputs_identity)
         {
             Err(_) => Ok(None),
             Ok(metadata_identity) => {
@@ -276,13 +276,17 @@ impl<
         }
     }
 
+    // TODO: Signature below is wrong. Should deal with `crate::task::Outputs` (and input identity
+    // should identify `crate::task::Inputs`). These types may need to be changed because they
+    // currently assume that their contents can be borrowed.
+
     pub fn get_outputs(
         &mut self,
-        inputs_identity: &IdentityScheme::Identity,
+        task_inputs_identity: &IdentityScheme::Identity,
     ) -> anyhow::Result<Option<FileIdentitiesManifest<IdentityScheme::Identity>>> {
         match self
             .outputs_pointer_cache
-            .read_blob_pointer(inputs_identity)
+            .read_blob_pointer(task_inputs_identity)
         {
             Err(_) => Ok(None),
             Ok(outputs_identity) => {
