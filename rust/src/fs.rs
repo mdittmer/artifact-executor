@@ -16,6 +16,8 @@ pub trait Filesystem: Clone + Sized {
 
     fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P) -> Result<Self, anyhow::Error>;
 
+    fn file_exists<P: AsRef<Path>>(&mut self, path: P) -> bool;
+
     fn open_file_for_read<P: AsRef<Path>>(&mut self, path: P) -> Result<Self::Read, Self::IoError>;
 
     fn open_file_for_write<P: AsRef<Path>>(
@@ -100,6 +102,14 @@ impl Filesystem for HostFilesystem {
             .get_absolute_path(&working_directory)
             .join(sub_directory);
         Self::try_new(sub_working_directory)
+    }
+
+    fn file_exists<P: AsRef<Path>>(&mut self, path: P) -> bool {
+        let path = self.get_absolute_path(path);
+        match std::fs::metadata(path) {
+            Ok(metadata) => metadata.is_file(),
+            Err(_) => false,
+        }
     }
 
     fn open_file_for_read<P: AsRef<Path>>(&mut self, path: P) -> Result<Self::Read, Self::IoError> {

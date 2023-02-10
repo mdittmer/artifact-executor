@@ -51,17 +51,37 @@ impl Default for ExecutionStrategy {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Inputs {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include_files: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_files: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include_globs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_globs: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub inter_file_references: Vec<InterFileReferences>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Outputs {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include_files: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include_match_transforms: Vec<MatchTransform>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_matches: Vec<Match>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InterFileReferences {
+    /// Default: Use matched files from containing object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files_to_match: Option<Inputs>,
+    pub match_transforms: Vec<MatchTransform>,
+    /// Default: Use working directory according to containing context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directories_to_search: Option<Vec<PathBuf>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

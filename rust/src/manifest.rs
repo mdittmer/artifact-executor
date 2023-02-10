@@ -17,7 +17,10 @@ use crate::format::System as SystemTransport;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::Identity as IdentityBound;
 use crate::identity::IntoTransport;
+use std::borrow::Cow;
 use std::collections::HashSet;
+use std::io::BufRead;
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::slice::Iter;
 
@@ -136,50 +139,172 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest {
 
     fn try_from(filesystem_and_description: (&mut FS, InputsConfig)) -> Result<Self, Self::Error> {
         let (filesystem, description) = filesystem_and_description;
-        let mut files: HashSet<PathBuf> = description.include_files.into_iter().collect();
-        for include_glob in description.include_globs {
-            let include_path_results = filesystem.execute_glob(&include_glob)?;
-            for include_path_result in include_path_results {
-                match include_path_result {
-                    Ok(path) => {
-                        files.insert(path);
-                    }
-                    Err(err) => {
-                        return Err(anyhow::Error::from(err).context(
-                            "error executing include-glob in inputs manifest description",
-                        ));
-                    }
-                }
-            }
+        if surely_includes_none(&description) {
+            anyhow::bail!(
+                "attempted to load input files configuration that always includes no files"
+            );
         }
-        for exclude_glob in description.exclude_globs {
-            let exclude_path_results = filesystem.execute_glob(&exclude_glob)?;
-            for exclude_path_result in exclude_path_results {
-                match exclude_path_result {
-                    Ok(path) => {
-                        if files.contains(&path) {
-                            files.remove(&path);
-                        }
-                    }
-                    Err(err) => {
-                        return Err(anyhow::Error::from(err).context(
-                            "error executing exclude-glob in inputs manifest description",
-                        ));
-                    }
-                }
-            }
-        }
-        for file in description.exclude_files.iter() {
-            if files.contains(file) {
-                files.remove(file);
-            }
-        }
+
+        let files = get_matching_files(filesystem, &description)?;
 
         let mut paths: Vec<PathBuf> = files.into_iter().collect();
         paths.sort();
 
         Ok(FilesManifest { paths })
     }
+}
+
+fn surely_includes_none(inputs_config: &InputsConfig) -> bool {
+    if inputs_config.include_files.len() > 0 || inputs_config.include_globs.len() > 0 {
+        return false;
+    }
+
+    for inter_file_references_config in inputs_config.inter_file_references.iter() {
+        if let Some(files_to_match) = &inter_file_references_config.files_to_match {
+            if !surely_includes_none(files_to_match) {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn get_matching_files<FS: FilesystemApi>(
+    filesystem: &mut FS,
+    inputs_config: &InputsConfig,
+) -> anyhow::Result<HashSet<PathBuf>> {
+    let mut files: HashSet<PathBuf> = inputs_config
+        .include_files
+        .iter()
+        .map(PathBuf::clone)
+        .collect();
+    for include_glob in inputs_config.include_globs.iter() {
+        let include_path_results = filesystem.execute_glob(&include_glob)?;
+        for include_path_result in include_path_results {
+            match include_path_result {
+                Ok(path) => {
+                    files.insert(path);
+                }
+                Err(err) => {
+                    return Err(anyhow::Error::from(err)
+                        .context("error executing include-glob in inputs manifest inputs_config"));
+                }
+            }
+        }
+    }
+    for exclude_glob in inputs_config.exclude_globs.iter() {
+        let exclude_path_results = filesystem.execute_glob(&exclude_glob)?;
+        for exclude_path_result in exclude_path_results {
+            match exclude_path_result {
+                Ok(path) => {
+                    if files.contains(&path) {
+                        files.remove(&path);
+                    }
+                }
+                Err(err) => {
+                    return Err(anyhow::Error::from(err)
+                        .context("error executing exclude-glob in inputs manifest inputs_config"));
+                }
+            }
+        }
+    }
+    for file in inputs_config.exclude_files.iter() {
+        if files.contains(file) {
+            files.remove(file);
+        }
+    }
+
+    // Keep matching files until no additional files are found.
+    let mut prev_num_files = files.len();
+    let mut num_files = prev_num_files + 1;
+    while prev_num_files < num_files {
+        for inter_file_references_config in inputs_config.inter_file_references.iter() {
+            // Match against either declared set of files or else initial set of files(before inter-file
+            // processing.
+            let matching_files = match &inter_file_references_config.files_to_match {
+                Some(declared_matching_files) => {
+                    Cow::Owned(get_matching_files(filesystem, declared_matching_files)?)
+                }
+                None => Cow::Borrowed(&files),
+            };
+
+            // Prepare regular expressions and their sets of transforms.
+            let match_transforms = inter_file_references_config.match_transforms
+                .iter()
+                .map(
+                    |MatchTransform {
+                        match_regular_expression,
+                        match_transform_expressions,
+                    }| {
+                        let match_transform_expressions = match_transform_expressions.clone();
+                        Ok(RegExAndTransforms {
+                            match_regular_expression: regex::Regex::new(&match_regular_expression)
+                                .map_err(anyhow::Error::from)
+                                .map_err(|err| err.context(format!(
+                                    "malformed regular-expression, {:?}, in input inter-file-references description",
+                                    match_regular_expression,
+                                )))?,
+                            match_transform_expressions,
+                        })
+                    },
+                )
+                .collect::<anyhow::Result<Vec<RegExAndTransforms>>>()?;
+
+            // For all inputs whose contents should be matched to find new inputs...
+            let mut matched_files = HashSet::new();
+            for matching_file in matching_files.iter() {
+                // Read each line.
+                let reader = BufReader::new(filesystem.open_file_for_read(matching_file)?);
+                for line_result in reader.lines() {
+                    // Give up if reading fails at any point.
+                    let line = line_result?;
+
+                    // Attempt to find-replace each bound regex/transformer pair.
+                    for RegExAndTransforms {
+                        match_regular_expression,
+                        match_transform_expressions,
+                    } in match_transforms.iter()
+                    {
+                        for matched_text in match_regular_expression.find_iter(&line) {
+                            // Matched regex; store each transform bound to this regex.
+                            for transform in match_transform_expressions.iter() {
+                                let matched_file = match_regular_expression
+                                    .replace(matched_text.as_str(), transform);
+                                let matched_path = PathBuf::from(matched_file.into_owned());
+                                // Find actual file path that exists for pattern.
+                                match &inter_file_references_config.directories_to_search {
+                                    Some(directories) => {
+                                        for directory in directories.iter() {
+                                            let full_matched_path = directory.join(&matched_path);
+                                            if filesystem.file_exists(&full_matched_path) {
+                                                matched_files.insert(full_matched_path);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        // Use matched path directly when no "directories to search"
+                                        // are provided.
+                                        if filesystem.file_exists(&matched_path) {
+                                            matched_files.insert(matched_path);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            files.extend(matched_files.into_iter());
+        }
+
+        prev_num_files = num_files;
+        num_files = files.len();
+    }
+
+    Ok(files)
 }
 
 impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest {
@@ -200,20 +325,15 @@ impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
         let (inputs, description) = inputs_and_outputs_description;
         let mut files: HashSet<PathBuf> = description.include_files.into_iter().collect();
 
-        struct MTRE {
-            match_regular_expression: regex::Regex,
-            match_transform_expressions: Vec<String>,
-        }
-
         let include_match_transforms = description
             .include_match_transforms
             .into_iter()
             .map(
                 |MatchTransform {
-                     match_regular_expression,
-                     match_transform_expressions,
-                 }| {
-                    Ok(MTRE {
+                    match_regular_expression,
+                    match_transform_expressions,
+                }| {
+                    Ok(RegExAndTransforms {
                         match_regular_expression: regex::Regex::new(&match_regular_expression)
                             .map_err(anyhow::Error::from)
                             .map_err(|err| err.context(format!(
@@ -224,7 +344,7 @@ impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
                     })
                 },
             )
-            .collect::<anyhow::Result<Vec<MTRE>>>()?;
+            .collect::<anyhow::Result<Vec<RegExAndTransforms>>>()?;
         let exclude_matches = description
             .exclude_matches
             .into_iter()
@@ -254,7 +374,7 @@ impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
                 continue;
             }
 
-            for MTRE {
+            for RegExAndTransforms {
                 match_regular_expression,
                 match_transform_expressions,
             } in include_match_transforms.iter()
@@ -278,6 +398,11 @@ impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
 
         Ok(FilesManifest { paths })
     }
+}
+
+struct RegExAndTransforms {
+    match_regular_expression: regex::Regex,
+    match_transform_expressions: Vec<String>,
 }
 
 impl TryFrom<(&FilesManifest, &OutputsConfig)> for FilesManifest {
@@ -676,12 +801,14 @@ impl IntoTransport for System {
 mod tests {
     use super::FilesManifest;
     use crate::format::Inputs as InputsConfig;
+    use crate::format::InterFileReferences;
     use crate::format::Match;
     use crate::format::MatchTransform;
     use crate::format::Outputs as OutputsConfig;
     use crate::fs::HostFilesystem;
     use std::convert::TryFrom;
     use std::fs::File;
+    use std::io::Write;
     use std::path::PathBuf;
 
     #[test]
@@ -696,7 +823,19 @@ mod tests {
         File::create(temporary_directory.path().join("a/b/o.stu")).expect("manually create file");
         File::create(temporary_directory.path().join("a/b/p.vwx")).expect("manually create file");
         File::create(temporary_directory.path().join("a/b/c/p.vwx")).expect("manually create file");
-        File::create(temporary_directory.path().join("a/b/d/p.vwx")).expect("manually create file");
+        {
+            let mut pointer_file = File::create(temporary_directory.path().join("a/b/d/p.vwx"))
+                .expect("manually create file");
+            // Refer to "referenced", which will resolve to "__/referenced".
+            pointer_file
+                .write_all("\n\nINCLUDE_FILE(referenced)\n\n".as_bytes())
+                .expect("write to pointer file");
+        }
+        // Store "__/referenced" to be found via `INCLUDE_FILE(...)` matching.
+        std::fs::create_dir_all(temporary_directory.path().join("__"))
+            .expect("manually create directories");
+        File::create(temporary_directory.path().join("__/referenced"))
+            .expect("manually create file");
 
         let mut host_filesystem = HostFilesystem::try_new(temporary_directory.path().to_path_buf())
             .expect("host filesystem");
@@ -705,14 +844,27 @@ mod tests {
             exclude_files: vec![PathBuf::from("a/b/p.vwx")],
             include_globs: vec![String::from("a/b/**/*.vwx")],
             exclude_globs: vec![String::from("**/c/*.vwx")],
+            inter_file_references: vec![InterFileReferences {
+                files_to_match: None,
+                // Match lines of the form `INCLUDE_FILE(file)`, resolving to path `file`.
+                match_transforms: vec![MatchTransform {
+                    match_regular_expression: String::from(r#"^INCLUDE_FILE\(([^)]+)\)$"#),
+                    match_transform_expressions: vec![String::from(r#"$1"#)],
+                }],
+                // Search for resolved files in `__` directory.
+                directories_to_search: Some(vec![PathBuf::from("__")]),
+            }],
         };
         let inputs_manifest: FilesManifest =
             FilesManifest::try_from((&mut host_filesystem, inputs_config))
                 .expect("create inputs manifest");
         assert_eq!(
-            FilesManifest::from_paths(
-                vec![PathBuf::from("a/n.stu"), PathBuf::from("a/b/d/p.vwx"),]
-            ),
+            FilesManifest::from_paths(vec![
+                // Resolved via `INCLUDE_FILE(...)` inside `a/b/d/p.vwx` file.
+                PathBuf::from("__/referenced"),
+                PathBuf::from("a/n.stu"),
+                PathBuf::from("a/b/d/p.vwx"),
+            ]),
             inputs_manifest
         );
     }

@@ -249,7 +249,7 @@ impl<
     ) -> anyhow::Result<()> {
         for (path, identity) in file_identities_manifest.identities() {
             if let Some(identity) = identity {
-                let mut blob_reader = filesystem.open_file_for_read(path)?;
+                let blob_reader = filesystem.open_file_for_read(path)?;
                 self.blob_cache.copy_blob(blob_reader, identity)?;
             }
         }
