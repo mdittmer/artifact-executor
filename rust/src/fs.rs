@@ -23,6 +23,8 @@ pub trait Filesystem: Clone + Sized {
         path: P,
     ) -> Result<Self::Write, Self::IoError>;
 
+    fn remove_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Self::IoError>;
+
     fn move_from_to<FromPath: AsRef<Path>, ToPath: AsRef<Path>>(
         &mut self,
         from_path: FromPath,
@@ -111,6 +113,11 @@ impl Filesystem for HostFilesystem {
     ) -> Result<Self::Write, Self::IoError> {
         let path = self.get_absolute_path(path);
         File::create(path)
+    }
+
+    fn remove_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Self::IoError> {
+        let path = self.get_absolute_path(path);
+        std::fs::remove_file(path)
     }
 
     fn move_from_to<FromPath: AsRef<Path>, ToPath: AsRef<Path>>(

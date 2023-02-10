@@ -19,15 +19,6 @@ pub struct BlobCache<
     _marker: PhantomData<(IdentityScheme, Serialization)>,
 }
 
-pub struct BlobPointerCache<
-    Filesystem: FilesystemApi,
-    IdentityScheme: IdentitySchemeApi,
-    Serialization: StringSerializer + WriteSerializer + ReadDeserializer,
-> {
-    blob_pointers: Filesystem,
-    _marker: PhantomData<(IdentityScheme, Serialization)>,
-}
-
 impl<
         Filesystem: FilesystemApi,
         IdentityScheme: IdentitySchemeApi,
@@ -69,6 +60,15 @@ impl<
     ) -> anyhow::Result<()> {
         copy_blob::<Filesystem, IdentityScheme, R>(&mut self.blobs, reader, identity)
     }
+}
+
+pub struct BlobPointerCache<
+    Filesystem: FilesystemApi,
+    IdentityScheme: IdentitySchemeApi,
+    Serialization: StringSerializer + WriteSerializer + ReadDeserializer,
+> {
+    blob_pointers: Filesystem,
+    _marker: PhantomData<(IdentityScheme, Serialization)>,
 }
 
 impl<
@@ -128,6 +128,46 @@ impl<
             source_identity,
             destination_identity,
         )
+    }
+}
+
+pub struct BlobPointerFileCache<Filesystem: FilesystemApi, IdentityScheme: IdentitySchemeApi> {
+    blob_pointers: Filesystem,
+    _marker: PhantomData<IdentityScheme>,
+}
+
+impl<Filesystem: FilesystemApi, IdentityScheme: IdentitySchemeApi>
+    BlobPointerFileCache<Filesystem, IdentityScheme>
+{
+    pub fn new(blob_pointers: Filesystem) -> Self {
+        Self {
+            blob_pointers,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn open_file_for_read(
+        &mut self,
+        source_identity: &IdentityScheme::Identity,
+    ) -> Result<Filesystem::Read, Filesystem::IoError> {
+        let blob_name = PathBuf::from(source_identity.to_string());
+        self.blob_pointers.open_file_for_read(&blob_name)
+    }
+
+    pub fn open_file_for_write(
+        &mut self,
+        source_identity: &IdentityScheme::Identity,
+    ) -> Result<Filesystem::Write, Filesystem::IoError> {
+        let blob_name = PathBuf::from(source_identity.to_string());
+        self.blob_pointers.open_file_for_write(&blob_name)
+    }
+
+    pub fn remove_file(
+        &mut self,
+        source_identity: &IdentityScheme::Identity,
+    ) -> Result<(), Filesystem::IoError> {
+        let blob_name = PathBuf::from(source_identity.to_string());
+        self.blob_pointers.remove_file(&blob_name)
     }
 }
 
