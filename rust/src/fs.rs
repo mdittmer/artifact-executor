@@ -348,6 +348,20 @@ mod tests {
             .open_file_for_read("newly_created_file.txt")
             .expect("host filesystem reopen for read");
 
+        {
+            host_filesystem
+                .open_file_for_write("file_for_delete_test")
+                .expect("host filesystem open for write before delete")
+                .write_all("\n".as_bytes())
+                .expect("host filesystem write before delete");
+        }
+        host_filesystem
+            .remove_file("file_for_delete_test")
+            .expect("host filesystem delete file");
+        host_filesystem
+            .open_file_for_read("file_for_delete_test")
+            .expect_err("host filesystem reopen deleted file");
+
         let pattern_iter = host_filesystem
             .execute_glob("sub/**/*.txt")
             .expect("host filesystem executed glob");
