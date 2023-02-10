@@ -9,15 +9,31 @@ use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Program;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Inputs<'a, Identity> {
-    environment_variables: &'a EnvironmentVariables,
-    program: &'a Program,
-    arguments: &'a Arguments,
-    input_files: &'a FileIdentitiesManifest<Identity>,
-    output_files: &'a FileIdentitiesManifest<Identity>,
+pub struct Inputs<Identity: IdentityBound> {
+    environment_variables: EnvironmentVariables,
+    program: Program,
+    arguments: Arguments,
+    input_files: FileIdentitiesManifest<Identity>,
+    output_files: FileIdentitiesManifest<Identity>,
 }
 
-impl<'a, Identity> IntoTransport for Inputs<'a, Identity>
+impl<Identity: IdentityBound> TryFrom<TaskInput<Identity>> for Inputs<Identity> {
+    type Error = anyhow::Error;
+
+    fn try_from(transport: TaskInput<Identity>) -> anyhow::Result<Self> {
+        Ok(Self {
+            environment_variables: EnvironmentVariables::try_from_manifest(
+                transport.environment_variables,
+            )?,
+            program: transport.program.into(),
+            arguments: transport.arguments.into(),
+            input_files: transport.input_files.try_into()?,
+            output_files: transport.output_files.try_into()?,
+        })
+    }
+}
+
+impl<Identity> IntoTransport for Inputs<Identity>
 where
     Identity: IdentityBound,
 {
@@ -26,8 +42,8 @@ where
     fn into_transport(self) -> TaskInput<Identity> {
         Self::Transport {
             environment_variables: self.environment_variables.as_manifest(),
-            program: self.program.into(),
-            arguments: self.arguments.into(),
+            program: self.program.as_transport(),
+            arguments: self.arguments.as_transport(),
             input_files: self.input_files.as_transport(),
             output_files: self.output_files.as_transport(),
         }
@@ -35,12 +51,23 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Outputs<'a, Identity> {
-    input_files_with_program: &'a FileIdentitiesManifest<Identity>,
-    output_files: &'a FileIdentitiesManifest<Identity>,
+pub struct Outputs<Identity: IdentityBound> {
+    input_files_with_program: FileIdentitiesManifest<Identity>,
+    output_files: FileIdentitiesManifest<Identity>,
 }
 
-impl<'a, Identity> Outputs<'a, Identity>
+impl<Identity: IdentityBound> TryFrom<TaskOutput<Identity>> for Outputs<Identity> {
+    type Error = anyhow::Error;
+
+    fn try_from(transport: TaskOutput<Identity>) -> anyhow::Result<Self> {
+        Ok(Self {
+            input_files_with_program: transport.input_files_with_program.try_into()?,
+            output_files: transport.output_files.try_into()?,
+        })
+    }
+}
+
+impl<Identity> Outputs<Identity>
 where
     Identity: IdentityBound,
 {
@@ -57,7 +84,7 @@ where
     }
 }
 
-impl<'a, Identity> IntoTransport for Outputs<'a, Identity>
+impl<Identity> IntoTransport for Outputs<Identity>
 where
     Identity: IdentityBound,
 {

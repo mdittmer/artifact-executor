@@ -293,7 +293,7 @@ impl TryFrom<(&FilesManifest, &OutputsConfig)> for FilesManifest {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FileIdentitiesManifest<Identity> {
+pub struct FileIdentitiesManifest<Identity: IdentityBound> {
     identity_scheme: IdentityScheme,
     identities: Vec<(PathBuf, Option<Identity>)>,
 }
@@ -492,6 +492,16 @@ impl EnvironmentVariables {
     }
 }
 
+impl IntoTransport for EnvironmentVariables {
+    type Transport = EnvironmentVariablesTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            environment_variables: self.environment_variables,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Program {
     program: PathBuf,
@@ -521,6 +531,16 @@ impl<'a> From<&Program> for ProgramTransport {
     }
 }
 
+impl IntoTransport for Program {
+    type Transport = ProgramTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            program: self.program,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Arguments {
     arguments: Vec<String>,
@@ -546,6 +566,16 @@ impl From<&Arguments> for ArgumentsTransport {
         let arguments: Arguments = arguments.clone();
         Self {
             arguments: arguments.arguments,
+        }
+    }
+}
+
+impl IntoTransport for Arguments {
+    type Transport = ArgumentsTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            arguments: self.arguments,
         }
     }
 }

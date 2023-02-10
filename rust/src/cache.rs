@@ -4,7 +4,6 @@ use crate::blob::ReadDeserializer as ReadDeserializerApi;
 use crate::blob::StringSerializer as StringSerializerApi;
 use crate::blob::WriteSerializer as WriteSerializerApi;
 use crate::format::Listing as ListingTransport;
-use crate::fs::copy_file_to;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::AsTransport;
 use crate::identity::Identity as IdentityBound;
@@ -14,7 +13,6 @@ use crate::manifest::Listing;
 use crate::manifest::Metadata;
 use crate::task::Inputs;
 use crate::task::Outputs;
-use serde::de::DeserializeOwned;
 use std::convert::TryFrom;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -221,8 +219,8 @@ impl<
         &mut self,
         timestamp_nanos: i64,
         execution_duration_nanos: u128,
-        inputs: Inputs<'a, IdentityScheme::Identity>,
-        outputs: Outputs<'a, IdentityScheme::Identity>,
+        inputs: Inputs<IdentityScheme::Identity>,
+        outputs: Outputs<IdentityScheme::Identity>,
     ) -> anyhow::Result<()> {
         let metadata = Metadata::new(
             timestamp_nanos,
@@ -276,28 +274,20 @@ impl<
         }
     }
 
-    // TODO: Signature below is wrong. Should deal with `crate::task::Outputs` (and input identity
-    // should identify `crate::task::Inputs`). These types may need to be changed because they
-    // currently assume that their contents can be borrowed.
-
     pub fn get_outputs(
         &mut self,
         task_inputs_identity: &IdentityScheme::Identity,
-    ) -> anyhow::Result<Option<FileIdentitiesManifest<IdentityScheme::Identity>>> {
+    ) -> anyhow::Result<Option<Outputs<IdentityScheme::Identity>>> {
         match self
             .outputs_pointer_cache
             .read_blob_pointer(task_inputs_identity)
         {
             Err(_) => Ok(None),
             Ok(outputs_identity) => {
-                let outputs_transport = self
-                    .blob_cache
-                    .read_blob::<crate::format::FileIdentitiesManifest<IdentityScheme::Identity>>(
-                        &outputs_identity,
-                    )?;
-                let outputs = FileIdentitiesManifest::<IdentityScheme::Identity>::try_from(
-                    outputs_transport,
-                )?;
+                let outputs_transport = self.blob_cache.read_blob::<crate::format::TaskOutput<
+                    IdentityScheme::Identity,
+                >>(&outputs_identity)?;
+                let outputs: Outputs<IdentityScheme::Identity> = outputs_transport.try_into()?;
                 Ok(Some(outputs))
             }
         }

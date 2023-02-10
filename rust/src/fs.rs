@@ -6,7 +6,6 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::pin::Pin;
 
 pub trait Filesystem: Clone + Sized {
     type Read: Read;
