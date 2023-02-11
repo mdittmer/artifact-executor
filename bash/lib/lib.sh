@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+# Copyright 2023 The Artifact Executor Authors. All rights reserved.
+# Use of this source code is governed by a Apache-style license that can be
+# found in the LICENSE file.
+
 #
 # General-purpose library functions.
 #

@@ -1,3 +1,7 @@
+// Copyright 2023 The Artifact Executor Authors. All rights reserved.
+// Use of this source code is governed by a Apache-style license that can be
+// found in the LICENSE file.
+
 use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::format::IdentityScheme as IdentitySchemeEnum;
 use crate::format::Sha256;

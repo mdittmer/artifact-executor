@@ -1,3 +1,7 @@
+// Copyright 2023 The Artifact Executor Authors. All rights reserved.
+// Use of this source code is governed by a Apache-style license that can be
+// found in the LICENSE file.
+
 use crate::error::Error as ErrorBound;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
