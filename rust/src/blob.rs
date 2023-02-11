@@ -304,7 +304,6 @@ fn copy_blob<Filesystem: FilesystemApi, IdentityScheme: IdentitySchemeApi, R: Re
         std::io::copy(&mut blob, &mut blob_file)?;
     }
 
-    let blob_file = filesystem.open_file_for_read(&blob_name)?;
     let computed_identity = IdentityScheme::identify_file(filesystem, &blob_name)?;
     if identity != &computed_identity {
         anyhow::bail!(

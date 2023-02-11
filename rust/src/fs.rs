@@ -45,6 +45,12 @@ pub trait Filesystem: Clone + Sized {
         &'a mut self,
         glob_pattern_str: &str,
     ) -> Result<Box<dyn Iterator<Item = Result<PathBuf, Self::GlobError>> + 'a>, Self::PatternError>;
+
+    fn glob_matches<P: AsRef<Path>>(
+        &mut self,
+        glob_pattern_str: &str,
+        path: P,
+    ) -> Result<bool, Self::PatternError>;
 }
 
 #[derive(Clone, Debug)]
@@ -183,6 +189,36 @@ impl Filesystem for HostFilesystem {
                 }));
             glob_iter
         })
+    }
+
+    fn glob_matches<P: AsRef<Path>>(
+        &mut self,
+        glob_pattern_str: &str,
+        path: P,
+    ) -> Result<bool, Self::PatternError> {
+        let working_directory = self
+            .working_directory
+            .to_str()
+            .expect("host filesystem working directory can be encoded as a string");
+
+        let path = if path.as_ref().is_absolute() {
+            path.as_ref().to_path_buf()
+        } else {
+            PathBuf::from(working_directory).join(path.as_ref())
+        };
+
+        let pattern = if Path::new(glob_pattern_str).is_absolute() {
+            glob::Pattern::new(glob_pattern_str)
+        } else {
+            glob::Pattern::new(&format!(
+                "{}{}{}",
+                working_directory,
+                std::path::MAIN_SEPARATOR,
+                glob_pattern_str
+            ))
+        }?;
+
+        Ok(pattern.matches_path(path.as_path()))
     }
 }
 

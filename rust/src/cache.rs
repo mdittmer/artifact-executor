@@ -235,7 +235,7 @@ impl<
         let inputs_identity = self.blob_cache.write_small_blob(&inputs.as_transport())?;
         self.index.put(inputs_identity.clone());
 
-        let outputs_identity = self.blob_cache.write_small_blob(&inputs.as_transport())?;
+        let outputs_identity = self.blob_cache.write_small_blob(&outputs.as_transport())?;
         self.outputs_pointer_cache
             .write_raw_blob_pointer(&inputs_identity, &outputs_identity)?;
 

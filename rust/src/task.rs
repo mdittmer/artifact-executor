@@ -94,23 +94,6 @@ impl<Identity: IdentityBound> TryFrom<TaskOutput<Identity>> for Outputs<Identity
     }
 }
 
-impl<Identity> Outputs<Identity>
-where
-    Identity: IdentityBound,
-{
-    fn into_transport(self) -> TaskOutput<Identity> {
-        TaskOutput {
-            input_files_with_program: self.input_files_with_program.as_transport(),
-            output_files: self.output_files.as_transport(),
-        }
-    }
-
-    pub fn as_transport(&self) -> TaskOutput<Identity> {
-        let self_clone: Self = self.clone();
-        self_clone.into_transport()
-    }
-}
-
 impl<Identity> IntoTransport for Outputs<Identity>
 where
     Identity: IdentityBound,

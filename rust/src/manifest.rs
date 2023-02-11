@@ -25,6 +25,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::BufRead;
 use std::io::BufReader;
+use std::path::Path;
 use std::path::PathBuf;
 use std::slice::Iter;
 
@@ -174,6 +175,7 @@ fn surely_includes_none(inputs_config: &InputsConfig) -> bool {
     true
 }
 
+/// Gets the set of files that match include/exclude pattern matching in `inputs_config`.
 fn get_matching_files<FS: FilesystemApi>(
     filesystem: &mut FS,
     inputs_config: &InputsConfig,
@@ -281,7 +283,13 @@ fn get_matching_files<FS: FilesystemApi>(
                                     Some(directories) => {
                                         for directory in directories.iter() {
                                             let full_matched_path = directory.join(&matched_path);
-                                            if filesystem.file_exists(&full_matched_path) {
+                                            if filesystem.file_exists(&full_matched_path)
+                                                && !is_shallowly_excluded(
+                                                    filesystem,
+                                                    inputs_config,
+                                                    &full_matched_path,
+                                                )?
+                                            {
                                                 matched_files.insert(full_matched_path);
                                                 break;
                                             }
@@ -290,7 +298,13 @@ fn get_matching_files<FS: FilesystemApi>(
                                     None => {
                                         // Use matched path directly when no "directories to search"
                                         // are provided.
-                                        if filesystem.file_exists(&matched_path) {
+                                        if filesystem.file_exists(&matched_path)
+                                            && !is_shallowly_excluded(
+                                                filesystem,
+                                                inputs_config,
+                                                &matched_path,
+                                            )?
+                                        {
                                             matched_files.insert(matched_path);
                                         }
                                     }
@@ -309,6 +323,28 @@ fn get_matching_files<FS: FilesystemApi>(
     }
 
     Ok(files)
+}
+
+/// Performs all non-recursive pattern matching from `inputs_config` against `path`. This function
+/// is used to ensure that files added by inspecting file contents are skipped when they should be
+/// categorically excluded.
+fn is_shallowly_excluded<FS: FilesystemApi, P: AsRef<Path>>(
+    filesystem: &mut FS,
+    inputs_config: &InputsConfig,
+    path: P,
+) -> anyhow::Result<bool> {
+    if inputs_config
+        .exclude_files
+        .contains(&path.as_ref().to_path_buf())
+    {
+        return Ok(true);
+    }
+    for exclude_glob in inputs_config.exclude_globs.iter() {
+        if filesystem.glob_matches(exclude_glob, path.as_ref())? {
+            return Ok(true);
+        }
+    }
+    return Ok(false);
 }
 
 impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest {
@@ -856,7 +892,18 @@ mod tests {
         // Store "__/referenced" to be found via `INCLUDE_FILE(...)` matching.
         std::fs::create_dir_all(temporary_directory.path().join("__"))
             .expect("manually create directories");
-        File::create(temporary_directory.path().join("__/referenced"))
+        {
+            let mut pointer_file = File::create(temporary_directory.path().join("__/referenced"))
+                .expect("manually create file");
+            // Refer to "b/c/p.vwx" and "referenced2" inside directory "a". The first is
+            // categorically excluded. The second should match.
+            pointer_file
+                .write_all(
+                    "\n\nINCLUDE_FILE(b/c/p.vwx)\nINCLUDE_FILE_INTERNAL(referenced2)\n".as_bytes(),
+                )
+                .expect("write to pointer file");
+        }
+        File::create(temporary_directory.path().join("a/referenced2"))
             .expect("manually create file");
 
         let mut host_filesystem = HostFilesystem::try_new(temporary_directory.path().to_path_buf())
@@ -866,16 +913,36 @@ mod tests {
             exclude_files: vec![PathBuf::from("a/b/p.vwx")],
             include_globs: vec![String::from("a/b/**/*.vwx")],
             exclude_globs: vec![String::from("**/c/*.vwx")],
-            inter_file_references: vec![InterFileReferences {
-                files_to_match: None,
-                // Match lines of the form `INCLUDE_FILE(file)`, resolving to path `file`.
-                match_transforms: vec![MatchTransform {
-                    match_regular_expression: String::from(r#"^INCLUDE_FILE\(([^)]+)\)$"#),
-                    match_transform_expressions: vec![String::from(r#"$1"#)],
-                }],
-                // Search for resolved files in `__` directory.
-                directories_to_search: Some(vec![PathBuf::from("__")]),
-            }],
+            inter_file_references: vec![
+                InterFileReferences {
+                    files_to_match: None,
+                    // Match lines of the form `INCLUDE_FILE(file)`, resolving to path `file`.
+                    match_transforms: vec![MatchTransform {
+                        match_regular_expression: String::from(r#"^INCLUDE_FILE\(([^)]+)\)$"#),
+                        match_transform_expressions: vec![String::from(r#"$1"#)],
+                    }],
+                    // Search for resolved files in `__` directory.
+                    directories_to_search: Some(vec![PathBuf::from("__")]),
+                },
+                InterFileReferences {
+                    files_to_match: Some(InputsConfig {
+                        include_files: vec![],
+                        exclude_files: vec![],
+                        include_globs: vec![String::from("__/*")],
+                        exclude_globs: vec![],
+                        inter_file_references: vec![],
+                    }),
+                    // Match lines of the form `INCLUDE_FILE(file)`, resolving to path `file`.
+                    match_transforms: vec![MatchTransform {
+                        match_regular_expression: String::from(
+                            r#"^INCLUDE_FILE_INTERNAL\(([^)]+)\)$"#,
+                        ),
+                        match_transform_expressions: vec![String::from(r#"$1"#)],
+                    }],
+                    // Search for resolved files in `__` directory.
+                    directories_to_search: Some(vec![PathBuf::from("a")]),
+                },
+            ],
         };
         let inputs_manifest: FilesManifest =
             FilesManifest::try_from((&mut host_filesystem, inputs_config))
@@ -886,6 +953,7 @@ mod tests {
                 PathBuf::from("__/referenced"),
                 PathBuf::from("a/n.stu"),
                 PathBuf::from("a/b/d/p.vwx"),
+                PathBuf::from("a/referenced2"),
             ]),
             inputs_manifest
         );
