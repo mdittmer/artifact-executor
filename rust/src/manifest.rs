@@ -5,22 +5,22 @@
 use sysinfo::SystemExt;
 
 use crate::context::diff_items_to_string;
-use crate::format::Arguments as ArgumentsTransport;
-use crate::format::EnvironmentVariables as EnvironmentVariablesTransport;
-use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
-use crate::format::FilesManifest as FilesManifestTransport;
-use crate::format::IdentityScheme;
-use crate::format::Inputs as InputsConfig;
-use crate::format::Listing as ListingTransport;
-use crate::format::Match;
-use crate::format::MatchTransform;
-use crate::format::Metadata as MetadataTransport;
-use crate::format::Outputs as OutputsConfig;
-use crate::format::Program as ProgramTransport;
-use crate::format::System as SystemTransport;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::Identity as IdentityBound;
 use crate::identity::IntoTransport;
+use crate::transport::Arguments as ArgumentsTransport;
+use crate::transport::EnvironmentVariables as EnvironmentVariablesTransport;
+use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
+use crate::transport::FilesManifest as FilesManifestTransport;
+use crate::transport::IdentityScheme;
+use crate::transport::Inputs as InputsConfig;
+use crate::transport::Listing as ListingTransport;
+use crate::transport::Match;
+use crate::transport::MatchTransform;
+use crate::transport::Metadata as MetadataTransport;
+use crate::transport::Outputs as OutputsConfig;
+use crate::transport::Program as ProgramTransport;
+use crate::transport::System as SystemTransport;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::io::BufRead;
@@ -858,12 +858,12 @@ impl IntoTransport for System {
 #[cfg(test)]
 mod tests {
     use super::FilesManifest;
-    use crate::format::Inputs as InputsConfig;
-    use crate::format::InterFileReferences;
-    use crate::format::Match;
-    use crate::format::MatchTransform;
-    use crate::format::Outputs as OutputsConfig;
     use crate::fs::HostFilesystem;
+    use crate::transport::Inputs as InputsConfig;
+    use crate::transport::InterFileReferences;
+    use crate::transport::Match;
+    use crate::transport::MatchTransform;
+    use crate::transport::Outputs as OutputsConfig;
     use std::convert::TryFrom;
     use std::fs::File;
     use std::io::Write;

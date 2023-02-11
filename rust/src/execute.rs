@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 // use std::path::PathBuf;
-// use crate::format::Inputs as InputsConfig;
-// use crate::format::Outputs as OutputsConfig;
+// use crate::transport::Inputs as InputsConfig;
+// use crate::transport::Outputs as OutputsConfig;
 
 // fn parse_files_manifest_description(
 //     files_manifest_description: &PathBuf,

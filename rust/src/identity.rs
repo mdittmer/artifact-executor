@@ -2,13 +2,13 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
-use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
-use crate::format::IdentityScheme as IdentitySchemeEnum;
-use crate::format::Sha256;
 use crate::fs::Filesystem;
 use crate::identity::Identity as IdentityBound;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::FilesManifest;
+use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
+use crate::transport::IdentityScheme as IdentitySchemeEnum;
+use crate::transport::Sha256;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::Digest as _;
@@ -142,12 +142,12 @@ impl<T: Clone + IntoTransport> AsTransport for T {
 mod tests {
     use super::identify_files;
     use super::ContentSha256;
-    use crate::format::FileIdentitiesManifest as FileIdentitiesManifestTransport;
-    use crate::format::IdentityScheme;
-    use crate::format::Sha256;
     use crate::fs::HostFilesystem;
     use crate::manifest::FileIdentitiesManifest;
     use crate::manifest::FilesManifest;
+    use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
+    use crate::transport::IdentityScheme;
+    use crate::transport::Sha256;
     use sha2::Digest as _;
     use sha2::Sha256 as Sha256Hasher;
     use std::path::PathBuf;

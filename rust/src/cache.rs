@@ -7,7 +7,6 @@ use crate::blob::BlobPointerCache;
 use crate::blob::ReadDeserializer as ReadDeserializerApi;
 use crate::blob::StringSerializer as StringSerializerApi;
 use crate::blob::WriteSerializer as WriteSerializerApi;
-use crate::format::Listing as ListingTransport;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::AsTransport;
 use crate::identity::Identity as IdentityBound;
@@ -17,6 +16,7 @@ use crate::manifest::Listing;
 use crate::manifest::Metadata;
 use crate::task::Inputs;
 use crate::task::Outputs;
+use crate::transport::Listing as ListingTransport;
 use std::convert::TryFrom;
 use std::marker::PhantomData;
 use std::path::Path;
@@ -272,7 +272,7 @@ impl<
             Ok(metadata_identity) => {
                 let metadata_transport = self
                     .blob_cache
-                    .read_blob::<crate::format::Metadata>(&metadata_identity)?;
+                    .read_blob::<crate::transport::Metadata>(&metadata_identity)?;
                 Ok(Some(metadata_transport.into()))
             }
         }
@@ -288,7 +288,7 @@ impl<
         {
             Err(_) => Ok(None),
             Ok(outputs_identity) => {
-                let outputs_transport = self.blob_cache.read_blob::<crate::format::TaskOutput<
+                let outputs_transport = self.blob_cache.read_blob::<crate::transport::TaskOutput<
                     IdentityScheme::Identity,
                 >>(&outputs_identity)?;
                 let outputs: Outputs<IdentityScheme::Identity> = outputs_transport.try_into()?;

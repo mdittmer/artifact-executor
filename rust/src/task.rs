@@ -2,8 +2,6 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
-use crate::format::TaskInput;
-use crate::format::TaskOutput;
 use crate::identity::AsTransport as _;
 use crate::identity::Identity as IdentityBound;
 use crate::identity::IntoTransport;
@@ -11,6 +9,8 @@ use crate::manifest::Arguments;
 use crate::manifest::EnvironmentVariables;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Program;
+use crate::transport::TaskInput;
+use crate::transport::TaskOutput;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
