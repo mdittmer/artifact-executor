@@ -11,6 +11,7 @@ use crate::manifest::Arguments;
 use crate::manifest::EnvironmentVariables;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Program;
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Inputs<Identity: IdentityBound> {
@@ -19,6 +20,28 @@ pub struct Inputs<Identity: IdentityBound> {
     arguments: Arguments,
     input_files: FileIdentitiesManifest<Identity>,
     output_files: FileIdentitiesManifest<Identity>,
+}
+
+impl<Identity: IdentityBound> Inputs<Identity> {
+    pub fn environment_variables(&self) -> impl Iterator<Item = &(String, String)> {
+        self.environment_variables.environment_variables()
+    }
+
+    pub fn program(&self) -> &PathBuf {
+        self.program.program()
+    }
+
+    pub fn arguments(&self) -> impl Iterator<Item = &String> {
+        self.arguments.arguments()
+    }
+
+    pub fn input_files(&self) -> impl Iterator<Item = &(PathBuf, Option<Identity>)> {
+        self.input_files.identities()
+    }
+
+    pub fn output_files(&self) -> impl Iterator<Item = &(PathBuf, Option<Identity>)> {
+        self.output_files.identities()
+    }
 }
 
 impl<Identity: IdentityBound> TryFrom<TaskInput<Identity>> for Inputs<Identity> {

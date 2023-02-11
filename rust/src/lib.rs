@@ -12,4 +12,5 @@ pub mod format;
 pub mod fs;
 pub mod identity;
 pub mod manifest;
+pub mod runner;
 pub mod task;

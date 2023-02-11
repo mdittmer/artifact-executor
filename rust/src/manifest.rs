@@ -525,6 +525,12 @@ pub struct EnvironmentVariables {
 }
 
 impl EnvironmentVariables {
+    pub fn environment_variables(&self) -> impl Iterator<Item = &(String, String)> {
+        self.environment_variables.iter()
+    }
+}
+
+impl EnvironmentVariables {
     /// Load environment variables from a user-specified configuration. Such configurations may be
     /// out of order, but must contain no duplicates.
     pub fn try_from_config(
@@ -636,6 +642,12 @@ pub struct Program {
     program: PathBuf,
 }
 
+impl Program {
+    pub fn program(&self) -> &PathBuf {
+        &self.program
+    }
+}
+
 impl From<ProgramTransport> for Program {
     fn from(transport: ProgramTransport) -> Self {
         Self {
@@ -673,6 +685,12 @@ impl IntoTransport for Program {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Arguments {
     arguments: Vec<String>,
+}
+
+impl Arguments {
+    pub fn arguments(&self) -> impl Iterator<Item = &String> {
+        self.arguments.iter()
+    }
 }
 
 impl From<ArgumentsTransport> for Arguments {
