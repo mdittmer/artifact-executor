@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 use crate::identity::AsTransport as _;
-use crate::identity::Identity as IdentityBound;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
 use crate::identity::IntoTransport;
 use crate::manifest::Arguments;
@@ -11,8 +10,6 @@ use crate::manifest::EnvironmentVariables;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::Outputs as OutputsDescription;
 use crate::manifest::Program;
-use crate::transport::FilesManifest;
-use crate::transport::Outputs as OutputsTransport;
 use crate::transport::TaskInput;
 use crate::transport::TaskOutput;
 use std::path::PathBuf;

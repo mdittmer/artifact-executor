@@ -5,7 +5,6 @@
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
 use crate::task::Inputs;
-use crate::task::Outputs;
 use anyhow::Context;
 use std::process::Command;
 use std::process::Stdio;
@@ -38,7 +37,19 @@ impl Runner for SimpleRunner {
         stdout: Stdout,
         stderr: Stderr,
     ) -> anyhow::Result<()> {
-        let mut command = Command::new(inputs.program());
+        let working_directory = filesystem.working_directory();
+        if working_directory.is_none() && inputs.program().is_relative() {
+            anyhow::bail!("attempted to run task filesystem that has no working directory, but relative program with relative path, {:?}", inputs.program());
+        }
+        let working_directory = working_directory.unwrap();
+
+        let program = if inputs.program().is_absolute() {
+            std::borrow::Cow::Borrowed(inputs.program())
+        } else {
+            std::borrow::Cow::Owned(working_directory.join(inputs.program()))
+        };
+
+        let mut command = Command::new(program.as_path());
         command
             .env_clear()
             .envs(inputs.environment_variables().map(|v| v.clone()))
@@ -78,6 +89,7 @@ mod tests {
     use std::fs::File;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
 
     #[test]
     fn test_simple_program() {
@@ -126,7 +138,7 @@ printf "{}" >&2
                 &mut filesystem,
                 &TaskInput::<ContentSha256> {
                     environment_variables: EnvironmentVariables::empty(),
-                    program: temporary_directory.path().join("bin").into(),
+                    program: PathBuf::from("bin").into(),
                     arguments: Arguments::empty().into(),
                     input_files: FileIdentitiesManifest::empty(),
                     outputs_description: Outputs::empty(),

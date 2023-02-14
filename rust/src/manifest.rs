@@ -32,7 +32,6 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
-use std::slice::Iter;
 
 #[derive(Clone, Debug)]
 pub struct RegularExpression {
@@ -578,7 +577,7 @@ impl TryFrom<(&FilesManifest, OutputsTransport)> for FilesManifest {
             }
 
             for match_transform_series in include_match_transforms.iter() {
-                let mut input_path_strings = HashSet::new();
+                let mut input_path_strings;
                 let mut output_path_strings = HashSet::new();
                 output_path_strings.insert(input.to_string());
                 for MatchTransform {
@@ -617,11 +616,6 @@ impl TryFrom<(&FilesManifest, OutputsTransport)> for FilesManifest {
 
         Ok(FilesManifest { paths })
     }
-}
-
-struct RegExAndTransforms {
-    match_regular_expression: regex::Regex,
-    match_transform_expressions: Vec<String>,
 }
 
 impl TryFrom<(&FilesManifest, &OutputsTransport)> for FilesManifest {

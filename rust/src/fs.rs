@@ -18,6 +18,8 @@ pub trait Filesystem: Clone + Sized {
     type PatternError: ErrorBound;
     type GlobError: ErrorBound;
 
+    fn working_directory(&mut self) -> Option<PathBuf>;
+
     fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P) -> Result<Self, anyhow::Error>;
 
     fn file_exists<P: AsRef<Path>>(&mut self, path: P) -> bool;
@@ -105,6 +107,10 @@ impl Filesystem for HostFilesystem {
     type IoError = std::io::Error;
     type PatternError = glob::PatternError;
     type GlobError = glob::GlobError;
+
+    fn working_directory(&mut self) -> Option<PathBuf> {
+        Some(self.working_directory.clone())
+    }
 
     fn sub_system<P: AsRef<Path>>(&mut self, sub_directory: P) -> Result<Self, anyhow::Error> {
         let working_directory = self.working_directory.clone();
