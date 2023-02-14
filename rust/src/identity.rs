@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 use crate::fs::Filesystem;
-use crate::identity::Identity as IdentityBound;
 use crate::manifest::FileIdentitiesManifest;
 use crate::manifest::FilesManifest;
+use crate::transport::ContentSha256;
 use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::transport::IdentityScheme as IdentitySchemeEnum;
 use crate::transport::Sha256;
@@ -21,7 +21,7 @@ pub trait Identity: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize + 
 
 impl<T: Clone + Debug + DeserializeOwned + Hash + Ord + Serialize + ToString> Identity for T {}
 
-pub trait IdentityScheme {
+pub trait IdentityScheme: Clone + DeserializeOwned + Serialize {
     type Identity: Identity;
 
     const IDENTITY_SCHEME: IdentitySchemeEnum;
@@ -39,8 +39,6 @@ pub trait IdentityScheme {
 
     fn identify_content<R: std::io::Read>(content: R) -> Result<Self::Identity, anyhow::Error>;
 }
-
-pub struct ContentSha256;
 
 impl IdentityScheme for ContentSha256 {
     type Identity = Sha256;
@@ -98,17 +96,16 @@ impl IdentityScheme for ContentSha256 {
     }
 }
 
-fn identify_files<FS, Identity, IS>(
+fn identify_files<FS, Id, IS>(
     filesystem: &mut FS,
     files_manifest: &FilesManifest,
-) -> Result<FileIdentitiesManifest<Identity>, anyhow::Error>
+) -> Result<FileIdentitiesManifest<IS>, anyhow::Error>
 where
     FS: Filesystem,
-    Identity: IdentityBound,
-    IS: IdentityScheme<Identity = Identity>,
+    IS: IdentityScheme<Identity = Id>,
 {
     FileIdentitiesManifestTransport {
-        identity_scheme: <IS as IdentityScheme>::IDENTITY_SCHEME,
+        identity_scheme: IS::IDENTITY_SCHEME,
         identities: files_manifest
             .paths()
             .map(|path| (path.clone(), IS::identify_file(filesystem, path).ok()))
@@ -141,10 +138,10 @@ impl<T: Clone + IntoTransport> AsTransport for T {
 #[cfg(test)]
 mod tests {
     use super::identify_files;
-    use super::ContentSha256;
     use crate::fs::HostFilesystem;
     use crate::manifest::FileIdentitiesManifest;
     use crate::manifest::FilesManifest;
+    use crate::transport::ContentSha256;
     use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
     use crate::transport::IdentityScheme;
     use crate::transport::Sha256;
@@ -198,13 +195,12 @@ mod tests {
             .into_iter()
             .map(|(path, optional_contents)| (path, optional_contents.map(get_sha256_from_str)))
             .collect();
-        let expected_manifest =
-            FileIdentitiesManifest::<Sha256>::from_transport(FileIdentitiesManifestTransport::<
-                Sha256,
-            > {
+        let expected_manifest = FileIdentitiesManifest::<ContentSha256>::from_transport(
+            FileIdentitiesManifestTransport::<ContentSha256> {
                 identity_scheme: IdentityScheme::ContentSha256,
                 identities: expected_identities,
-            });
+            },
+        );
 
         let actual_manifest = identify_files::<HostFilesystem, Sha256, ContentSha256>(
             &mut filesystem,

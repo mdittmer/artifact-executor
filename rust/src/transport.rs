@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use crate::identity::Identity as IdentityBound;
+use crate::identity::IdentityScheme as IdentitySchemeApi;
 use anyhow::Context as _;
 use serde::de::DeserializeOwned;
 use serde::de::Deserializer;
@@ -72,9 +73,19 @@ pub struct Outputs {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include_files: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub include_match_transforms: Vec<MatchTransform>,
+    pub include_match_transforms: Vec<Vec<MatchTransform>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub exclude_matches: Vec<Match>,
+}
+
+impl Outputs {
+    pub fn empty() -> Self {
+        Self {
+            include_files: vec![],
+            include_match_transforms: vec![],
+            exclude_matches: vec![],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -88,13 +99,13 @@ pub struct InterFileReferences {
     pub directories_to_search: Option<Vec<PathBuf>>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct MatchTransform {
     pub match_regular_expression: String,
     pub match_transform_expressions: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct Match {
     pub match_regular_expression: String,
 }
@@ -108,9 +119,23 @@ pub struct Arguments {
     pub arguments: Vec<String>,
 }
 
+impl Arguments {
+    pub fn empty() -> Self {
+        Self { arguments: vec![] }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EnvironmentVariables {
     pub environment_variables: Vec<(String, String)>,
+}
+
+impl EnvironmentVariables {
+    pub fn empty() -> Self {
+        Self {
+            environment_variables: vec![],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -118,6 +143,13 @@ pub struct Program {
     pub program: PathBuf,
 }
 
+impl From<PathBuf> for Program {
+    fn from(program: PathBuf) -> Self {
+        Self { program }
+    }
+}
+
+/// Enum that enumerates all available identity schemes.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityScheme {
@@ -130,6 +162,11 @@ impl Default for IdentityScheme {
     }
 }
 
+/// A `crate::identity::IdentityScheme` type for sha256-digest-of-contents.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ContentSha256;
+
+/// A `crate::identity::IdentityScheme::Identity`-compatible type for sha256 digests.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Sha256([u8; 32]);
 
@@ -222,39 +259,30 @@ where
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: IdentityBound")]
-pub struct TaskSummary<Identity>
-where
-    Identity: IdentityBound,
-{
-    pub input: TaskInput<Identity>,
-    pub output: TaskOutput<Identity>,
+#[serde(bound = "IS: IdentitySchemeApi")]
+pub struct TaskSummary<IS: IdentitySchemeApi> {
+    pub input: TaskInput<IS>,
+    pub output: TaskOutput<IS>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: IdentityBound")]
-pub struct TaskInput<Identity>
-where
-    Identity: IdentityBound,
-{
+#[serde(bound = "IS: IdentitySchemeApi")]
+pub struct TaskInput<IS: IdentitySchemeApi> {
     #[serde(flatten)]
     pub environment_variables: EnvironmentVariables,
     #[serde(flatten)]
     pub program: Program,
     #[serde(flatten)]
     pub arguments: Arguments,
-    pub input_files: FileIdentitiesManifest<Identity>,
-    pub output_files: FileIdentitiesManifest<Identity>,
+    pub input_files: FileIdentitiesManifest<IS>,
+    pub outputs_description: Outputs,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: IdentityBound")]
-pub struct TaskOutput<Identity>
-where
-    Identity: IdentityBound,
-{
-    pub input_files_with_program: FileIdentitiesManifest<Identity>,
-    pub output_files: FileIdentitiesManifest<Identity>,
+#[serde(bound = "IS: IdentitySchemeApi")]
+pub struct TaskOutput<IS: IdentitySchemeApi> {
+    pub input_files_with_program: FileIdentitiesManifest<IS>,
+    pub output_files: FileIdentitiesManifest<IS>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -262,14 +290,26 @@ pub struct FilesManifest {
     pub paths: Vec<PathBuf>,
 }
 
+impl FilesManifest {
+    pub fn empty() -> Self {
+        Self { paths: vec![] }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(bound = "Identity: Clone + DeserializeOwned + Serialize")]
-pub struct FileIdentitiesManifest<Identity>
-where
-    Identity: IdentityBound,
-{
+#[serde(bound = "IS::Identity: Clone + DeserializeOwned + Serialize")]
+pub struct FileIdentitiesManifest<IS: IdentitySchemeApi> {
     pub identity_scheme: IdentityScheme,
-    pub identities: Vec<(PathBuf, Option<Identity>)>,
+    pub identities: Vec<(PathBuf, Option<IS::Identity>)>,
+}
+
+impl<IS: IdentitySchemeApi> FileIdentitiesManifest<IS> {
+    pub fn empty() -> Self {
+        Self {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities: vec![],
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

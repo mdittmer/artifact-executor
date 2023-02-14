@@ -223,8 +223,8 @@ impl<
         &mut self,
         timestamp_nanos: i64,
         execution_duration_nanos: u128,
-        inputs: Inputs<IdentityScheme::Identity>,
-        outputs: Outputs<IdentityScheme::Identity>,
+        inputs: Inputs<IdentityScheme>,
+        outputs: Outputs<IdentityScheme>,
     ) -> anyhow::Result<()> {
         let metadata = Metadata::new(
             timestamp_nanos,
@@ -249,7 +249,7 @@ impl<
     pub fn put_blobs<'a>(
         &mut self,
         filesystem: &mut Filesystem,
-        file_identities_manifest: &FileIdentitiesManifest<IdentityScheme::Identity>,
+        file_identities_manifest: &FileIdentitiesManifest<IdentityScheme>,
     ) -> anyhow::Result<()> {
         for (path, identity) in file_identities_manifest.identities() {
             if let Some(identity) = identity {
@@ -281,17 +281,17 @@ impl<
     pub fn get_outputs(
         &mut self,
         task_inputs_identity: &IdentityScheme::Identity,
-    ) -> anyhow::Result<Option<Outputs<IdentityScheme::Identity>>> {
+    ) -> anyhow::Result<Option<Outputs<IdentityScheme>>> {
         match self
             .outputs_pointer_cache
             .read_blob_pointer(task_inputs_identity)
         {
             Err(_) => Ok(None),
             Ok(outputs_identity) => {
-                let outputs_transport = self.blob_cache.read_blob::<crate::transport::TaskOutput<
-                    IdentityScheme::Identity,
-                >>(&outputs_identity)?;
-                let outputs: Outputs<IdentityScheme::Identity> = outputs_transport.try_into()?;
+                let outputs_transport = self
+                    .blob_cache
+                    .read_blob::<crate::transport::TaskOutput<IdentityScheme>>(&outputs_identity)?;
+                let outputs: Outputs<IdentityScheme> = outputs_transport.try_into()?;
                 Ok(Some(outputs))
             }
         }

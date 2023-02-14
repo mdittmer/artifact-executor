@@ -382,8 +382,8 @@ mod tests {
     use super::JSON;
     use crate::fs::Filesystem as FilesystemApi;
     use crate::fs::HostFilesystem;
-    use crate::identity::ContentSha256;
     use crate::identity::IdentityScheme as _;
+    use crate::transport::ContentSha256;
     use serde::Deserialize;
     use serde::Serialize;
 

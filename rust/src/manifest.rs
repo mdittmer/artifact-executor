@@ -2,32 +2,131 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
+use regex::Regex;
 use sysinfo::SystemExt;
 
 use crate::context::diff_items_to_string;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::Identity as IdentityBound;
+use crate::identity::IdentityScheme as IdentitySchemeApi;
 use crate::identity::IntoTransport;
 use crate::transport::Arguments as ArgumentsTransport;
 use crate::transport::EnvironmentVariables as EnvironmentVariablesTransport;
 use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::transport::FilesManifest as FilesManifestTransport;
 use crate::transport::IdentityScheme;
-use crate::transport::Inputs as InputsConfig;
+use crate::transport::Inputs as InputsTransport;
 use crate::transport::Listing as ListingTransport;
 use crate::transport::Match;
-use crate::transport::MatchTransform;
+use crate::transport::MatchTransform as MatchTransformTransport;
 use crate::transport::Metadata as MetadataTransport;
-use crate::transport::Outputs as OutputsConfig;
+use crate::transport::Outputs as OutputsTransport;
 use crate::transport::Program as ProgramTransport;
 use crate::transport::System as SystemTransport;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 use std::slice::Iter;
+
+#[derive(Clone, Debug)]
+pub struct RegularExpression {
+    regular_expression_string: String,
+    regular_expression: Regex,
+}
+
+#[derive(Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct RegexStr<'a>(&'a str);
+
+impl TryFrom<String> for RegularExpression {
+    type Error = regex::Error;
+
+    fn try_from(regular_expression_string: String) -> Result<Self, Self::Error> {
+        let regular_expression = regex::Regex::new(&regular_expression_string)?;
+        Ok(Self {
+            regular_expression_string,
+            regular_expression,
+        })
+    }
+}
+
+impl Hash for RegularExpression {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        RegexStr(&self.regular_expression_string).hash(state)
+    }
+}
+
+impl PartialEq for RegularExpression {
+    fn eq(&self, other: &Self) -> bool {
+        RegexStr(&self.regular_expression_string) == RegexStr(&other.regular_expression_string)
+    }
+}
+
+impl Eq for RegularExpression {}
+
+impl PartialOrd<Self> for RegularExpression {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        RegexStr(&self.regular_expression_string)
+            .partial_cmp(&RegexStr(&other.regular_expression_string))
+    }
+}
+
+impl Ord for RegularExpression {
+    fn cmp(&self, other: &Self) -> Ordering {
+        RegexStr(&self.regular_expression_string).cmp(&RegexStr(&other.regular_expression_string))
+    }
+}
+
+impl TryFrom<Match> for RegularExpression {
+    type Error = regex::Error;
+
+    fn try_from(match_transport: Match) -> Result<Self, Self::Error> {
+        Self::try_from(match_transport.match_regular_expression)
+    }
+}
+
+impl IntoTransport for RegularExpression {
+    type Transport = Match;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            match_regular_expression: self.regular_expression_string,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct MatchTransform {
+    match_regular_expression: RegularExpression,
+    match_transform_expressions: Vec<String>,
+}
+
+impl TryFrom<MatchTransformTransport> for MatchTransform {
+    type Error = regex::Error;
+
+    fn try_from(transport: MatchTransformTransport) -> Result<Self, Self::Error> {
+        Ok(Self {
+            match_regular_expression: transport.match_regular_expression.try_into()?,
+            match_transform_expressions: transport.match_transform_expressions,
+        })
+    }
+}
+
+impl IntoTransport for MatchTransform {
+    type Transport = MatchTransformTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            match_regular_expression: self.match_regular_expression.regular_expression_string,
+            match_transform_expressions: self.match_transform_expressions,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Listing<Identity: IdentityBound> {
@@ -105,28 +204,110 @@ impl<Identity: IdentityBound> TryFrom<&ListingTransport<Identity>> for Listing<I
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct Outputs {
+    include_files: HashSet<PathBuf>,
+    include_match_transforms: HashSet<Vec<MatchTransform>>,
+    exclude_matches: HashSet<RegularExpression>,
+}
+
+impl TryFrom<OutputsTransport> for Outputs {
+    type Error = anyhow::Error;
+
+    fn try_from(transport: OutputsTransport) -> anyhow::Result<Self> {
+        let mut include_files = HashSet::new();
+
+        for include_file in transport.include_files.into_iter() {
+            if include_files.contains(&include_file) {
+                anyhow::bail!(
+                    "include path, {:?}, appears twice in output files description",
+                    include_file
+                );
+            }
+
+            include_files.insert(include_file);
+        }
+
+        let mut include_match_transforms = HashSet::new();
+        for include_match_transform_series in transport.include_match_transforms.into_iter() {
+            let match_transform_series = include_match_transform_series
+                .into_iter()
+                .map(MatchTransform::try_from)
+                .collect::<Result<_, _>>()?;
+            if include_match_transforms.contains(&match_transform_series) {
+                anyhow::bail!(
+                    "include regular expression + transform sequence, {:?}, appears twice in output files description",
+                    match_transform_series
+                );
+            }
+
+            include_match_transforms.insert(match_transform_series);
+        }
+
+        let mut exclude_matches = HashSet::new();
+        for exclude_match in transport.exclude_matches.into_iter() {
+            let exclude_match: RegularExpression = exclude_match.try_into()?;
+            if exclude_matches.contains(&exclude_match) {
+                anyhow::bail!(
+                    "exclude regular expression, {:?}, appears twice in output files description",
+                    exclude_match
+                );
+            }
+
+            exclude_matches.insert(exclude_match);
+        }
+
+        Ok(Self {
+            include_files,
+            include_match_transforms,
+            exclude_matches,
+        })
+    }
+}
+
+impl IntoTransport for Outputs {
+    type Transport = OutputsTransport;
+
+    fn into_transport(self) -> Self::Transport {
+        let mut include_files: Vec<_> = self.include_files.into_iter().collect();
+        include_files.sort();
+        let mut include_match_transforms: Vec<_> = self
+            .include_match_transforms
+            .into_iter()
+            .map(|match_transform_series| {
+                match_transform_series
+                    .into_iter()
+                    .map(MatchTransform::into_transport)
+                    .collect()
+            })
+            .collect();
+        include_match_transforms.sort();
+        let mut exclude_matches: Vec<_> = self
+            .exclude_matches
+            .into_iter()
+            .map(RegularExpression::into_transport)
+            .collect();
+        exclude_matches.sort();
+        Self::Transport {
+            include_files,
+            include_match_transforms,
+            exclude_matches,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct FilesManifest {
     paths: Vec<PathBuf>,
 }
 
 impl FilesManifest {
-    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
-        self.paths.iter()
-    }
-}
-
-impl FilesManifest {
-    pub fn empty() -> Self {
-        Self { paths: vec![] }
-    }
-
     #[cfg(test)]
     pub fn from_paths(mut paths: Vec<PathBuf>) -> Self {
         paths.sort();
         Self { paths }
     }
 
-    pub fn iter(&self) -> Iter<'_, PathBuf> {
+    pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
         self.paths.iter()
     }
 }
@@ -139,10 +320,12 @@ impl IntoTransport for FilesManifest {
     }
 }
 
-impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest {
+impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsTransport)> for FilesManifest {
     type Error = anyhow::Error;
 
-    fn try_from(filesystem_and_description: (&mut FS, InputsConfig)) -> Result<Self, Self::Error> {
+    fn try_from(
+        filesystem_and_description: (&mut FS, InputsTransport),
+    ) -> Result<Self, Self::Error> {
         let (filesystem, description) = filesystem_and_description;
         if surely_includes_none(&description) {
             anyhow::bail!(
@@ -159,7 +342,7 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsConfig)> for FilesManifest {
     }
 }
 
-fn surely_includes_none(inputs_config: &InputsConfig) -> bool {
+fn surely_includes_none(inputs_config: &InputsTransport) -> bool {
     if inputs_config.include_files.len() > 0 || inputs_config.include_globs.len() > 0 {
         return false;
     }
@@ -178,7 +361,7 @@ fn surely_includes_none(inputs_config: &InputsConfig) -> bool {
 /// Gets the set of files that match include/exclude pattern matching in `inputs_config`.
 fn get_matching_files<FS: FilesystemApi>(
     filesystem: &mut FS,
-    inputs_config: &InputsConfig,
+    inputs_config: &InputsTransport,
 ) -> anyhow::Result<HashSet<PathBuf>> {
     let mut files: HashSet<PathBuf> = inputs_config
         .include_files
@@ -236,26 +419,12 @@ fn get_matching_files<FS: FilesystemApi>(
             };
 
             // Prepare regular expressions and their sets of transforms.
-            let match_transforms = inter_file_references_config.match_transforms
-                .iter()
-                .map(
-                    |MatchTransform {
-                        match_regular_expression,
-                        match_transform_expressions,
-                    }| {
-                        let match_transform_expressions = match_transform_expressions.clone();
-                        Ok(RegExAndTransforms {
-                            match_regular_expression: regex::Regex::new(&match_regular_expression)
-                                .map_err(anyhow::Error::from)
-                                .map_err(|err| err.context(format!(
-                                    "malformed regular-expression, {:?}, in input inter-file-references description",
-                                    match_regular_expression,
-                                )))?,
-                            match_transform_expressions,
-                        })
-                    },
-                )
-                .collect::<anyhow::Result<Vec<RegExAndTransforms>>>()?;
+            let match_transforms = inter_file_references_config
+                .match_transforms
+                .clone()
+                .into_iter()
+                .map(MatchTransform::try_from)
+                .collect::<Result<Vec<_>, _>>()?;
 
             // For all inputs whose contents should be matched to find new inputs...
             let mut matched_files = HashSet::new();
@@ -267,16 +436,17 @@ fn get_matching_files<FS: FilesystemApi>(
                     let line = line_result?;
 
                     // Attempt to find-replace each bound regex/transformer pair.
-                    for RegExAndTransforms {
+                    for MatchTransform {
                         match_regular_expression,
                         match_transform_expressions,
                     } in match_transforms.iter()
                     {
-                        for matched_text in match_regular_expression.find_iter(&line) {
+                        let regular_expression = &match_regular_expression.regular_expression;
+                        for matched_text in regular_expression.find_iter(&line) {
                             // Matched regex; store each transform bound to this regex.
                             for transform in match_transform_expressions.iter() {
-                                let matched_file = match_regular_expression
-                                    .replace(matched_text.as_str(), transform);
+                                let matched_file =
+                                    regular_expression.replace(matched_text.as_str(), transform);
                                 let matched_path = PathBuf::from(matched_file.into_owned());
                                 // Find actual file path that exists for pattern.
                                 match &inter_file_references_config.directories_to_search {
@@ -330,7 +500,7 @@ fn get_matching_files<FS: FilesystemApi>(
 /// categorically excluded.
 fn is_shallowly_excluded<FS: FilesystemApi, P: AsRef<Path>>(
     filesystem: &mut FS,
-    inputs_config: &InputsConfig,
+    inputs_config: &InputsTransport,
     path: P,
 ) -> anyhow::Result<bool> {
     if inputs_config
@@ -347,44 +517,26 @@ fn is_shallowly_excluded<FS: FilesystemApi, P: AsRef<Path>>(
     return Ok(false);
 }
 
-impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsConfig)> for FilesManifest {
+impl<FS: FilesystemApi> TryFrom<(&mut FS, &InputsTransport)> for FilesManifest {
     type Error = anyhow::Error;
-    fn try_from(filesystem_and_description: (&mut FS, &InputsConfig)) -> Result<Self, Self::Error> {
+    fn try_from(
+        filesystem_and_description: (&mut FS, &InputsTransport),
+    ) -> Result<Self, Self::Error> {
         let (filesystem, description) = filesystem_and_description;
-        let description: InputsConfig = description.clone();
+        let description: InputsTransport = description.clone();
         FilesManifest::try_from((filesystem, description))
     }
 }
 
-impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
+impl TryFrom<(&FilesManifest, OutputsTransport)> for FilesManifest {
     type Error = anyhow::Error;
 
     fn try_from(
-        inputs_and_outputs_description: (&FilesManifest, OutputsConfig),
+        inputs_and_outputs_description: (&FilesManifest, OutputsTransport),
     ) -> Result<Self, Self::Error> {
         let (inputs, description) = inputs_and_outputs_description;
         let mut files: HashSet<PathBuf> = description.include_files.into_iter().collect();
 
-        let include_match_transforms = description
-            .include_match_transforms
-            .into_iter()
-            .map(
-                |MatchTransform {
-                    match_regular_expression,
-                    match_transform_expressions,
-                }| {
-                    Ok(RegExAndTransforms {
-                        match_regular_expression: regex::Regex::new(&match_regular_expression)
-                            .map_err(anyhow::Error::from)
-                            .map_err(|err| err.context(format!(
-                                "malformed include-regular-expression, {:?}, in outputs manifest description",
-                                match_regular_expression,
-                            )))?,
-                        match_transform_expressions,
-                    })
-                },
-            )
-            .collect::<anyhow::Result<Vec<RegExAndTransforms>>>()?;
         let exclude_matches = description
             .exclude_matches
             .into_iter()
@@ -400,7 +552,18 @@ impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
             )
             .collect::<anyhow::Result<Vec<regex::Regex>>>()?;
 
-        for input in inputs.iter() {
+        let include_match_transforms = description
+            .include_match_transforms
+            .into_iter()
+            .map(|match_transform_series| {
+                match_transform_series
+                    .into_iter()
+                    .map(MatchTransform::try_from)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for input in inputs.paths() {
             let input = input.to_str().ok_or_else(|| anyhow::anyhow!("input path, {:?}, cannot be formatted as string for preparing associated output paths", input))?;
 
             let mut exclude_input = false;
@@ -414,20 +577,36 @@ impl TryFrom<(&FilesManifest, OutputsConfig)> for FilesManifest {
                 continue;
             }
 
-            for RegExAndTransforms {
-                match_regular_expression,
-                match_transform_expressions,
-            } in include_match_transforms.iter()
-            {
-                if match_regular_expression.is_match(input) {
-                    for match_transform_expression in match_transform_expressions.iter() {
-                        let output_string = match_regular_expression
-                            .replace_all(input, match_transform_expression)
-                            .to_string();
-                        let output = PathBuf::from(output_string);
-                        if !files.contains(&output) {
-                            files.insert(output);
+            for match_transform_series in include_match_transforms.iter() {
+                let mut input_path_strings = HashSet::new();
+                let mut output_path_strings = HashSet::new();
+                output_path_strings.insert(input.to_string());
+                for MatchTransform {
+                    match_regular_expression:
+                        RegularExpression {
+                            regular_expression, ..
+                        },
+                    match_transform_expressions,
+                } in match_transform_series.iter()
+                {
+                    input_path_strings = output_path_strings;
+                    output_path_strings = HashSet::new();
+                    for input_path_string in input_path_strings.iter() {
+                        if regular_expression.is_match(input_path_string) {
+                            for match_transform_expression in match_transform_expressions.iter() {
+                                let output_path = regular_expression
+                                    .replace_all(input_path_string, match_transform_expression)
+                                    .to_string();
+                                output_path_strings.insert(output_path);
+                            }
                         }
+                    }
+                }
+
+                for output_path_string in output_path_strings.into_iter() {
+                    let output_path = PathBuf::from(output_path_string);
+                    if !files.contains(&output_path) {
+                        files.insert(output_path);
                     }
                 }
             }
@@ -445,38 +624,32 @@ struct RegExAndTransforms {
     match_transform_expressions: Vec<String>,
 }
 
-impl TryFrom<(&FilesManifest, &OutputsConfig)> for FilesManifest {
+impl TryFrom<(&FilesManifest, &OutputsTransport)> for FilesManifest {
     type Error = anyhow::Error;
 
     fn try_from(
-        inputs_and_outputs_description: (&FilesManifest, &OutputsConfig),
+        inputs_and_outputs_description: (&FilesManifest, &OutputsTransport),
     ) -> Result<Self, Self::Error> {
         let (filesystem, description) = inputs_and_outputs_description;
-        let description: OutputsConfig = description.clone();
+        let description: OutputsTransport = description.clone();
         FilesManifest::try_from((filesystem, description))
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct FileIdentitiesManifest<Identity: IdentityBound> {
+pub struct FileIdentitiesManifest<IS: IdentitySchemeApi> {
     identity_scheme: IdentityScheme,
-    identities: Vec<(PathBuf, Option<Identity>)>,
+    identities: Vec<(PathBuf, Option<IS::Identity>)>,
 }
 
-impl<Identity> FileIdentitiesManifest<Identity>
-where
-    Identity: IdentityBound,
-{
-    pub fn identities(&self) -> impl Iterator<Item = &(PathBuf, Option<Identity>)> {
+impl<IS: IdentitySchemeApi> FileIdentitiesManifest<IS> {
+    pub fn identities(&self) -> impl Iterator<Item = &(PathBuf, Option<IS::Identity>)> {
         self.identities.iter()
     }
 }
 
-impl<Identity> IntoTransport for FileIdentitiesManifest<Identity>
-where
-    Identity: IdentityBound,
-{
-    type Transport = FileIdentitiesManifestTransport<Identity>;
+impl<IS: IdentitySchemeApi> IntoTransport for FileIdentitiesManifest<IS> {
+    type Transport = FileIdentitiesManifestTransport<IS>;
 
     fn into_transport(self) -> Self::Transport {
         Self::Transport {
@@ -487,11 +660,8 @@ where
 }
 
 #[cfg(test)]
-impl<Identity> FileIdentitiesManifest<Identity>
-where
-    Identity: IdentityBound,
-{
-    pub fn from_transport(mut transport: FileIdentitiesManifestTransport<Identity>) -> Self {
+impl<IS: IdentitySchemeApi> FileIdentitiesManifest<IS> {
+    pub fn from_transport(mut transport: FileIdentitiesManifestTransport<IS>) -> Self {
         transport
             .identities
             .sort_by(|(path1, _), (path2, _)| path1.cmp(path2));
@@ -501,22 +671,18 @@ where
         }
     }
 
-    pub fn from_borrowed_transport(transport: &FileIdentitiesManifestTransport<Identity>) -> Self {
-        let transport: FileIdentitiesManifestTransport<Identity> = transport.clone();
+    pub fn from_borrowed_transport(transport: &FileIdentitiesManifestTransport<IS>) -> Self {
+        let transport: FileIdentitiesManifestTransport<IS> = transport.clone();
         FileIdentitiesManifest::from_transport(transport)
     }
 }
 
-impl<Identity> TryFrom<FileIdentitiesManifestTransport<Identity>>
-    for FileIdentitiesManifest<Identity>
-where
-    Identity: IdentityBound,
+impl<IS: IdentitySchemeApi> TryFrom<FileIdentitiesManifestTransport<IS>>
+    for FileIdentitiesManifest<IS>
 {
     type Error = anyhow::Error;
 
-    fn try_from(
-        transport: FileIdentitiesManifestTransport<Identity>,
-    ) -> Result<Self, anyhow::Error> {
+    fn try_from(transport: FileIdentitiesManifestTransport<IS>) -> Result<Self, anyhow::Error> {
         let stated_paths: Vec<_> = transport.identities.iter().map(|(path, _)| path).collect();
         let mut sorted_paths: Vec<_> = transport.identities.iter().map(|(path, _)| path).collect();
         sorted_paths.sort();
@@ -540,17 +706,13 @@ where
     }
 }
 
-impl<Identity> TryFrom<&FileIdentitiesManifestTransport<Identity>>
-    for FileIdentitiesManifest<Identity>
-where
-    Identity: IdentityBound,
+impl<IS: IdentitySchemeApi> TryFrom<&FileIdentitiesManifestTransport<IS>>
+    for FileIdentitiesManifest<IS>
 {
     type Error = anyhow::Error;
 
-    fn try_from(
-        transport: &FileIdentitiesManifestTransport<Identity>,
-    ) -> Result<Self, anyhow::Error> {
-        let transport: FileIdentitiesManifestTransport<Identity> = transport.clone();
+    fn try_from(transport: &FileIdentitiesManifestTransport<IS>) -> Result<Self, anyhow::Error> {
+        let transport: FileIdentitiesManifestTransport<IS> = transport.clone();
         Self::try_from(transport)
     }
 }
@@ -859,11 +1021,11 @@ impl IntoTransport for System {
 mod tests {
     use super::FilesManifest;
     use crate::fs::HostFilesystem;
-    use crate::transport::Inputs as InputsConfig;
+    use crate::transport::Inputs as InputsTransport;
     use crate::transport::InterFileReferences;
     use crate::transport::Match;
     use crate::transport::MatchTransform;
-    use crate::transport::Outputs as OutputsConfig;
+    use crate::transport::Outputs as OutputsTransport;
     use std::convert::TryFrom;
     use std::fs::File;
     use std::io::Write;
@@ -908,7 +1070,7 @@ mod tests {
 
         let mut host_filesystem = HostFilesystem::try_new(temporary_directory.path().to_path_buf())
             .expect("host filesystem");
-        let inputs_config = InputsConfig {
+        let inputs_config = InputsTransport {
             include_files: vec![PathBuf::from("a/n.stu")],
             exclude_files: vec![PathBuf::from("a/b/p.vwx")],
             include_globs: vec![String::from("a/b/**/*.vwx")],
@@ -925,7 +1087,7 @@ mod tests {
                     directories_to_search: Some(vec![PathBuf::from("__")]),
                 },
                 InterFileReferences {
-                    files_to_match: Some(InputsConfig {
+                    files_to_match: Some(InputsTransport {
                         include_files: vec![],
                         exclude_files: vec![],
                         include_globs: vec![String::from("__/*")],
@@ -969,20 +1131,23 @@ mod tests {
             PathBuf::from("a/b/c/p.vwx"),
             PathBuf::from("a/b/d/p.vwx"),
         ]);
-        let outputs_config = OutputsConfig {
+        let outputs_config = OutputsTransport {
             include_files: vec![PathBuf::from("out/log")],
             include_match_transforms: vec![
-                MatchTransform {
-                    match_regular_expression: String::from("^(.*)[.](stu|vwx)$"),
-                    match_transform_expressions: vec![
-                        String::from("out/$1.out.1"),
-                        String::from("out/$1.out.2"),
-                    ],
-                },
-                MatchTransform {
+                vec![
+                    // TODO: Test multiple transforms over single path.
+                    MatchTransform {
+                        match_regular_expression: String::from("^(.*)[.](stu|vwx)$"),
+                        match_transform_expressions: vec![
+                            String::from("out/$1.out.1"),
+                            String::from("out/$1.out.2"),
+                        ],
+                    },
+                ],
+                vec![MatchTransform {
                     match_regular_expression: String::from("^(.*)[.]stu$"),
                     match_transform_expressions: vec![String::from("out/$1.out.stu")],
-                },
+                }],
             ],
             exclude_matches: vec![
                 Match {
