@@ -2,9 +2,9 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
+use crate::canonical::FileIdentitiesManifest;
+use crate::canonical::FilesManifest;
 use crate::fs::Filesystem;
-use crate::manifest::FileIdentitiesManifest;
-use crate::manifest::FilesManifest;
 use crate::transport::ContentSha256;
 use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::transport::IdentityScheme as IdentitySchemeEnum;
@@ -138,9 +138,9 @@ impl<T: Clone + IntoTransport> AsTransport for T {
 #[cfg(test)]
 mod tests {
     use super::identify_files;
+    use crate::canonical::FileIdentitiesManifest;
+    use crate::canonical::FilesManifest;
     use crate::fs::HostFilesystem;
-    use crate::manifest::FileIdentitiesManifest;
-    use crate::manifest::FilesManifest;
     use crate::transport::ContentSha256;
     use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
     use crate::transport::IdentityScheme;

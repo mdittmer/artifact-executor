@@ -138,6 +138,14 @@ impl EnvironmentVariables {
     }
 }
 
+impl From<Vec<(String, String)>> for EnvironmentVariables {
+    fn from(environment_variables: Vec<(String, String)>) -> Self {
+        Self {
+            environment_variables,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Program {
     pub program: PathBuf,
@@ -261,13 +269,13 @@ where
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(bound = "IS: IdentitySchemeApi")]
 pub struct TaskSummary<IS: IdentitySchemeApi> {
-    pub input: TaskInput<IS>,
-    pub output: TaskOutput<IS>,
+    pub input: TaskInputs<IS>,
+    pub output: TaskOutputs<IS>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(bound = "IS: IdentitySchemeApi")]
-pub struct TaskInput<IS: IdentitySchemeApi> {
+pub struct TaskInputs<IS: IdentitySchemeApi> {
     #[serde(flatten)]
     pub environment_variables: EnvironmentVariables,
     #[serde(flatten)]
@@ -280,7 +288,7 @@ pub struct TaskInput<IS: IdentitySchemeApi> {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(bound = "IS: IdentitySchemeApi")]
-pub struct TaskOutput<IS: IdentitySchemeApi> {
+pub struct TaskOutputs<IS: IdentitySchemeApi> {
     pub input_files_with_program: FileIdentitiesManifest<IS>,
     pub output_files: FileIdentitiesManifest<IS>,
 }
@@ -308,6 +316,17 @@ impl<IS: IdentitySchemeApi> FileIdentitiesManifest<IS> {
         Self {
             identity_scheme: IS::IDENTITY_SCHEME,
             identities: vec![],
+        }
+    }
+}
+
+impl<IS: IdentitySchemeApi> From<Vec<(PathBuf, Option<IS::Identity>)>>
+    for FileIdentitiesManifest<IS>
+{
+    fn from(identities: Vec<(PathBuf, Option<IS::Identity>)>) -> Self {
+        Self {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities,
         }
     }
 }
@@ -342,4 +361,11 @@ impl From<sysinfo::System> for System {
                 .unwrap_or_else(|| system.cpus().len()),
         }
     }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TaskRunTime {
+    pub wall_clock_seconds: f32,
+    pub user_mode_seconds: f32,
+    pub kernel_mode_seconds: f32,
 }

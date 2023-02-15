@@ -7,6 +7,7 @@ use sysinfo::SystemExt;
 
 use crate::context::diff_items_to_string;
 use crate::fs::Filesystem as FilesystemApi;
+use crate::identity::AsTransport;
 use crate::identity::Identity as IdentityBound;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
 use crate::identity::IntoTransport;
@@ -23,6 +24,8 @@ use crate::transport::Metadata as MetadataTransport;
 use crate::transport::Outputs as OutputsTransport;
 use crate::transport::Program as ProgramTransport;
 use crate::transport::System as SystemTransport;
+use crate::transport::TaskInputs as TaskInputsTransport;
+use crate::transport::TaskOutputs as TaskOutputsTransport;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -1007,6 +1010,138 @@ impl IntoTransport for System {
             distribution_id: self.distribution_id,
             total_memory: self.total_memory,
             estimated_num_cpu_cores: self.estimated_num_cpu_cores,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskInputs<IS: IdentitySchemeApi> {
+    environment_variables: EnvironmentVariables,
+    program: Program,
+    arguments: Arguments,
+    input_files: FileIdentitiesManifest<IS>,
+    outputs_description: Outputs,
+}
+
+impl<IS: IdentitySchemeApi> TaskInputs<IS> {
+    pub fn environment_variables(&self) -> impl Iterator<Item = &(String, String)> {
+        self.environment_variables.environment_variables()
+    }
+
+    pub fn program(&self) -> &PathBuf {
+        self.program.program()
+    }
+
+    pub fn arguments(&self) -> impl Iterator<Item = &String> {
+        self.arguments.arguments()
+    }
+
+    pub fn input_files(&self) -> impl Iterator<Item = &(PathBuf, Option<IS::Identity>)> {
+        self.input_files.identities()
+    }
+
+    pub fn outputs_description(&self) -> &Outputs {
+        &self.outputs_description
+    }
+
+    pub fn wrap_program<FS: FilesystemApi, P: AsRef<Path>>(
+        self,
+        filesystem: &mut FS,
+        new_program: P,
+    ) -> anyhow::Result<Self> {
+        let old_program_str = self.program().to_str().ok_or_else(|| {
+            anyhow::anyhow!(
+                "wrapping task program: previous program path, {:?} cannot be converted to string",
+                new_program.as_ref()
+            )
+        })?;
+        let mut arguments = vec![String::from(old_program_str)];
+        arguments.extend(self.arguments().map(String::clone));
+        let mut input_files = self.input_files().map(Clone::clone).collect::<Vec<_>>();
+        let old_program_identity = IS::identify_file(filesystem, old_program_str)?;
+        input_files.push((self.program().clone(), Some(old_program_identity)));
+        input_files.sort();
+        Ok(Self {
+            environment_variables: self.environment_variables,
+            program: Program {
+                program: new_program.as_ref().to_path_buf(),
+            },
+            arguments: Arguments { arguments },
+            input_files: FileIdentitiesManifest {
+                identity_scheme: IS::IDENTITY_SCHEME,
+                identities: input_files,
+            },
+            outputs_description: self.outputs_description,
+        })
+    }
+
+    pub fn prepend_arguments(self, arguments: impl Iterator<Item = String>) -> Self {
+        let mut arguments = arguments.collect::<Vec<_>>();
+        arguments.extend(self.arguments().map(String::clone));
+        Self {
+            environment_variables: self.environment_variables,
+            program: self.program,
+            arguments: Arguments { arguments },
+            input_files: self.input_files,
+            outputs_description: self.outputs_description,
+        }
+    }
+}
+
+impl<IS: IdentitySchemeApi> TryFrom<TaskInputsTransport<IS>> for TaskInputs<IS> {
+    type Error = anyhow::Error;
+
+    fn try_from(transport: TaskInputsTransport<IS>) -> anyhow::Result<Self> {
+        Ok(Self {
+            environment_variables: EnvironmentVariables::try_from_manifest(
+                transport.environment_variables,
+            )?,
+            program: transport.program.into(),
+            arguments: transport.arguments.into(),
+            input_files: transport.input_files.try_into()?,
+            outputs_description: transport.outputs_description.try_into()?,
+        })
+    }
+}
+
+impl<IS: IdentitySchemeApi> IntoTransport for TaskInputs<IS> {
+    type Transport = TaskInputsTransport<IS>;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            environment_variables: self.environment_variables.as_manifest(),
+            program: self.program.as_transport(),
+            arguments: self.arguments.as_transport(),
+            input_files: self.input_files.as_transport(),
+            outputs_description: self.outputs_description.as_transport(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskOutputs<IS: IdentitySchemeApi> {
+    input_files_with_program: FileIdentitiesManifest<IS>,
+    output_files: FileIdentitiesManifest<IS>,
+}
+
+impl<IS: IdentitySchemeApi> TryFrom<TaskOutputsTransport<IS>> for TaskOutputs<IS> {
+    type Error = anyhow::Error;
+
+    fn try_from(transport: TaskOutputsTransport<IS>) -> anyhow::Result<Self> {
+        Ok(Self {
+            input_files_with_program: transport.input_files_with_program.try_into()?,
+            output_files: transport.output_files.try_into()?,
+        })
+    }
+}
+
+impl<IS: IdentitySchemeApi> IntoTransport for TaskOutputs<IS> {
+    type Transport = TaskOutputsTransport<IS>;
+
+    fn into_transport(self) -> Self::Transport {
+        Self::Transport {
+            input_files_with_program: self.input_files_with_program.as_transport(),
+            output_files: self.output_files.as_transport(),
         }
     }
 }

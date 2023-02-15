@@ -7,15 +7,15 @@ use crate::blob::BlobPointerCache;
 use crate::blob::ReadDeserializer as ReadDeserializerApi;
 use crate::blob::StringSerializer as StringSerializerApi;
 use crate::blob::WriteSerializer as WriteSerializerApi;
+use crate::canonical::FileIdentitiesManifest;
+use crate::canonical::Listing;
+use crate::canonical::Metadata;
+use crate::canonical::TaskInputs;
+use crate::canonical::TaskOutputs;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::AsTransport;
 use crate::identity::Identity as IdentityBound;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
-use crate::manifest::FileIdentitiesManifest;
-use crate::manifest::Listing;
-use crate::manifest::Metadata;
-use crate::task::Inputs;
-use crate::task::Outputs;
 use crate::transport::Listing as ListingTransport;
 use std::convert::TryFrom;
 use std::marker::PhantomData;
@@ -223,8 +223,8 @@ impl<
         &mut self,
         timestamp_nanos: i64,
         execution_duration_nanos: u128,
-        inputs: Inputs<IdentityScheme>,
-        outputs: Outputs<IdentityScheme>,
+        inputs: TaskInputs<IdentityScheme>,
+        outputs: TaskOutputs<IdentityScheme>,
     ) -> anyhow::Result<()> {
         let metadata = Metadata::new(
             timestamp_nanos,
@@ -281,17 +281,17 @@ impl<
     pub fn get_outputs(
         &mut self,
         task_inputs_identity: &IdentityScheme::Identity,
-    ) -> anyhow::Result<Option<Outputs<IdentityScheme>>> {
+    ) -> anyhow::Result<Option<TaskOutputs<IdentityScheme>>> {
         match self
             .outputs_pointer_cache
             .read_blob_pointer(task_inputs_identity)
         {
             Err(_) => Ok(None),
             Ok(outputs_identity) => {
-                let outputs_transport = self
-                    .blob_cache
-                    .read_blob::<crate::transport::TaskOutput<IdentityScheme>>(&outputs_identity)?;
-                let outputs: Outputs<IdentityScheme> = outputs_transport.try_into()?;
+                let outputs_transport = self.blob_cache.read_blob::<crate::transport::TaskOutputs<
+                    IdentityScheme,
+                >>(&outputs_identity)?;
+                let outputs: TaskOutputs<IdentityScheme> = outputs_transport.try_into()?;
                 Ok(Some(outputs))
             }
         }

@@ -5,12 +5,11 @@
 pub mod args;
 pub mod blob;
 pub mod cache;
+pub mod canonical;
 pub mod context;
 pub mod error;
 pub mod execute;
 pub mod fs;
 pub mod identity;
-pub mod manifest;
 pub mod runner;
-pub mod task;
 pub mod transport;

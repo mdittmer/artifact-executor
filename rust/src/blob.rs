@@ -219,6 +219,35 @@ impl ReadDeserializer for JSON {
     }
 }
 
+// pub struct JSON5;
+
+// impl StringSerializer for JSON5 {
+//     type Error = json5::Error;
+
+//     fn to_string<D: Serialize>(data: &D) -> Result<String, Self::Error> {
+//         json5::to_string(data)
+//     }
+// }
+
+// impl WriteSerializer for JSON5 {
+//     type Error = serde_json::Error;
+
+//     fn to_writer<W: Write, D: Serialize>(writer: W, data: &D) -> Result<(), Self::Error> {
+//         json5::to_writer(writer, data)
+//     }
+// }
+
+// impl ReadDeserializer for JSON5 {
+//     type Error = anyhow::Error;
+
+//     fn from_reader<R: Read, D: DeserializeOwned>(reader: R) -> Result<D, Self::Error> {
+//         let mut buffer: Vec<u8>;
+//         reader.read_to_end(&mut buffer)?;
+//         let buffer_str = std::str::from_utf8(&buffer)?;
+//         json5::from_str(buffer_str)
+//     }
+// }
+
 fn read_blob<
     Filesystem: FilesystemApi,
     IdentityScheme: IdentitySchemeApi,
