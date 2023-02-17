@@ -9,6 +9,7 @@ use crate::transport::ContentSha256;
 use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::transport::IdentityScheme as IdentitySchemeEnum;
 use crate::transport::Sha256;
+use anyhow::Context as _;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::Digest as _;
@@ -50,7 +51,9 @@ impl IdentityScheme for ContentSha256 {
         path: P,
     ) -> Result<Self::Identity, anyhow::Error> {
         let mut hasher = Sha256Hasher::new();
-        let mut file = filesystem.open_file_for_read(path)?;
+        let mut file = filesystem
+            .open_file_for_read(path.as_ref())
+            .with_context(|| format!("identifying {:?}", path.as_ref()))?;
         std::io::copy(&mut file, &mut hasher)?;
         let hash: [u8; 32] = hasher
             .finalize()
@@ -142,8 +145,6 @@ mod tests {
     use crate::canonical::FilesManifest;
     use crate::fs::HostFilesystem;
     use crate::transport::ContentSha256;
-    use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
-    use crate::transport::IdentityScheme;
     use crate::transport::Sha256;
     use sha2::Digest as _;
     use sha2::Sha256 as Sha256Hasher;
@@ -188,25 +189,20 @@ mod tests {
 
         let mut filesystem = HostFilesystem::try_new(temporary_directory.path().to_path_buf())
             .expect("host filesystem");
-        let files_manifest =
-            FilesManifest::from_paths(files.iter().map(|(path, _)| path.clone()).collect());
+        let files_manifest = FilesManifest::new(files.iter().map(|(path, _)| path));
 
         let expected_identities: Vec<_> = files
             .into_iter()
             .map(|(path, optional_contents)| (path, optional_contents.map(get_sha256_from_str)))
             .collect();
-        let expected_manifest = FileIdentitiesManifest::<ContentSha256>::from_transport(
-            FileIdentitiesManifestTransport::<ContentSha256> {
-                identity_scheme: IdentityScheme::ContentSha256,
-                identities: expected_identities,
-            },
-        );
+        let expected_manifest = FileIdentitiesManifest::<ContentSha256>::new(expected_identities);
 
         let actual_manifest = identify_files::<HostFilesystem, Sha256, ContentSha256>(
             &mut filesystem,
             &files_manifest,
         )
         .expect("identify files");
+
         assert_eq!(expected_manifest, actual_manifest);
     }
 }

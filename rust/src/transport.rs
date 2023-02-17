@@ -123,6 +123,18 @@ impl Arguments {
     pub fn empty() -> Self {
         Self { arguments: vec![] }
     }
+
+    pub fn from_iter<
+        S: Into<String>,
+        I: Iterator<Item = S>,
+        II: IntoIterator<Item = S, IntoIter = I>,
+    >(
+        arguments: II,
+    ) -> Self {
+        Self {
+            arguments: arguments.into_iter().map(|s| s.into()).collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

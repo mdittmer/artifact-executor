@@ -108,6 +108,19 @@ pub struct MatchTransform {
     match_transform_expressions: Vec<String>,
 }
 
+#[cfg(test)]
+impl MatchTransform {
+    pub fn new(
+        match_regular_expression: RegularExpression,
+        match_transform_expressions: Vec<String>,
+    ) -> Self {
+        Self {
+            match_regular_expression,
+            match_transform_expressions,
+        }
+    }
+}
+
 impl TryFrom<MatchTransformTransport> for MatchTransform {
     type Error = regex::Error;
 
@@ -147,6 +160,17 @@ impl<Identity: IdentityBound> Listing<Identity> {
 
     pub fn remove(&mut self, identity: &Identity) -> bool {
         self.entries.remove(identity)
+    }
+}
+
+#[cfg(test)]
+impl<Identity: IdentityBound> Listing<Identity> {
+    pub fn new<I: Iterator<Item = Identity>, II: IntoIterator<Item = Identity, IntoIter = I>>(
+        entries: II,
+    ) -> Self {
+        Self {
+            entries: entries.into_iter().collect(),
+        }
     }
 }
 
@@ -210,6 +234,54 @@ pub struct Outputs {
     include_files: HashSet<PathBuf>,
     include_match_transforms: HashSet<Vec<MatchTransform>>,
     exclude_matches: HashSet<RegularExpression>,
+}
+
+impl Outputs {
+    pub fn empty() -> Self {
+        Self {
+            include_files: HashSet::new(),
+            include_match_transforms: HashSet::new(),
+            exclude_matches: HashSet::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+impl Outputs {
+    pub fn new<
+        P: AsRef<Path>,
+        I1: Iterator<Item = P>,
+        II1: IntoIterator<Item = P, IntoIter = I1>,
+        I22: Iterator<Item = MatchTransform>,
+        II22: IntoIterator<Item = MatchTransform, IntoIter = I22>,
+        I21: Iterator<Item = II22>,
+        II21: IntoIterator<Item = II22, IntoIter = I21>,
+        I3: Iterator<Item = RegularExpression>,
+        II3: IntoIterator<Item = RegularExpression, IntoIter = I3>,
+    >(
+        include_files: II1,
+        include_match_transforms: II21,
+        exclude_matches: II3,
+    ) -> Self {
+        Self {
+            include_files: include_files
+                .into_iter()
+                .map(|path| path.as_ref().to_path_buf())
+                .collect(),
+            include_match_transforms: include_match_transforms
+                .into_iter()
+                .map(|into_iter| into_iter.into_iter().collect())
+                .collect(),
+            exclude_matches: exclude_matches.into_iter().collect(),
+        }
+    }
+
+    /// Helper function to avoid the type system requiring that all type parameters for `Self::new`
+    /// be manually specified.
+    pub fn empty_include_match_transforms() -> HashSet<Vec<MatchTransform>> {
+        let empty: HashSet<Vec<MatchTransform>> = HashSet::new();
+        empty
+    }
 }
 
 impl TryFrom<OutputsTransport> for Outputs {
@@ -303,14 +375,57 @@ pub struct FilesManifest {
 }
 
 impl FilesManifest {
-    #[cfg(test)]
-    pub fn from_paths(mut paths: Vec<PathBuf>) -> Self {
-        paths.sort();
-        Self { paths }
-    }
-
     pub fn paths(&self) -> impl Iterator<Item = &PathBuf> {
         self.paths.iter()
+    }
+
+    pub fn into_identified<IS: IdentitySchemeApi, FS: FilesystemApi>(
+        self,
+        filesystem: &mut FS,
+    ) -> FileIdentitiesManifest<IS> {
+        FileIdentitiesManifest {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities: self
+                .paths
+                .into_iter()
+                .map(|path| match IS::identify_file(filesystem, &path) {
+                    Ok(identity) => (path, Some(identity)),
+                    Err(_) => (path, None),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn try_into_identified<IS: IdentitySchemeApi, FS: FilesystemApi>(
+        self,
+        filesystem: &mut FS,
+    ) -> anyhow::Result<FileIdentitiesManifest<IS>> {
+        let identities = self
+            .paths
+            .into_iter()
+            .map(|path| match IS::identify_file(filesystem, &path) {
+                Ok(identity) => Ok((path, Some(identity))),
+                Err(error) => Err(error),
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(FileIdentitiesManifest {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities,
+        })
+    }
+}
+
+#[cfg(test)]
+impl FilesManifest {
+    pub fn new<P: AsRef<Path>, I: Iterator<Item = P>, II: IntoIterator<Item = P, IntoIter = I>>(
+        paths: II,
+    ) -> Self {
+        let mut paths: Vec<_> = paths
+            .into_iter()
+            .map(|path| path.as_ref().to_path_buf())
+            .collect();
+        paths.sort();
+        Self { paths }
     }
 }
 
@@ -640,6 +755,13 @@ pub struct FileIdentitiesManifest<IS: IdentitySchemeApi> {
 }
 
 impl<IS: IdentitySchemeApi> FileIdentitiesManifest<IS> {
+    pub fn empty() -> Self {
+        Self {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities: vec![],
+        }
+    }
+
     pub fn identities(&self) -> impl Iterator<Item = &(PathBuf, Option<IS::Identity>)> {
         self.identities.iter()
     }
@@ -658,19 +780,22 @@ impl<IS: IdentitySchemeApi> IntoTransport for FileIdentitiesManifest<IS> {
 
 #[cfg(test)]
 impl<IS: IdentitySchemeApi> FileIdentitiesManifest<IS> {
-    pub fn from_transport(mut transport: FileIdentitiesManifestTransport<IS>) -> Self {
-        transport
-            .identities
-            .sort_by(|(path1, _), (path2, _)| path1.cmp(path2));
+    pub fn new<
+        P: AsRef<Path>,
+        I: Iterator<Item = (P, Option<IS::Identity>)>,
+        II: IntoIterator<Item = (P, Option<IS::Identity>), IntoIter = I>,
+    >(
+        identities: II,
+    ) -> Self {
+        let mut identities: Vec<_> = identities
+            .into_iter()
+            .map(|(path, identity)| (path.as_ref().to_path_buf(), identity))
+            .collect();
+        identities.sort_by(|(path1, _), (path2, _)| path1.cmp(path2));
         Self {
-            identity_scheme: transport.identity_scheme,
-            identities: transport.identities,
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities,
         }
-    }
-
-    pub fn from_borrowed_transport(transport: &FileIdentitiesManifestTransport<IS>) -> Self {
-        let transport: FileIdentitiesManifestTransport<IS> = transport.clone();
-        FileIdentitiesManifest::from_transport(transport)
     }
 }
 
@@ -723,9 +848,13 @@ impl EnvironmentVariables {
     pub fn environment_variables(&self) -> impl Iterator<Item = &(String, String)> {
         self.environment_variables.iter()
     }
-}
 
-impl EnvironmentVariables {
+    pub fn empty() -> Self {
+        Self {
+            environment_variables: vec![],
+        }
+    }
+
     /// Load environment variables from a user-specified configuration. Such configurations may be
     /// out of order, but must contain no duplicates.
     pub fn try_from_config(
@@ -822,6 +951,28 @@ impl EnvironmentVariables {
     }
 }
 
+#[cfg(test)]
+impl EnvironmentVariables {
+    pub fn new<
+        KeyString,
+        ValueString,
+        I: Iterator<Item = (KeyString, ValueString)>,
+        II: IntoIterator<Item = (KeyString, ValueString), IntoIter = I>,
+    >(
+        environment_variables: II,
+    ) -> Self
+    where
+        String: From<KeyString> + From<ValueString>,
+    {
+        Self {
+            environment_variables: environment_variables
+                .into_iter()
+                .map(|(key, value)| (String::from(key), String::from(value)))
+                .collect(),
+        }
+    }
+}
+
 impl IntoTransport for EnvironmentVariables {
     type Transport = EnvironmentVariablesTransport;
 
@@ -840,6 +991,15 @@ pub struct Program {
 impl Program {
     pub fn program(&self) -> &PathBuf {
         &self.program
+    }
+}
+
+#[cfg(test)]
+impl Program {
+    pub fn new<P: AsRef<Path>>(program: P) -> Self {
+        Self {
+            program: program.as_ref().to_path_buf(),
+        }
     }
 }
 
@@ -883,8 +1043,26 @@ pub struct Arguments {
 }
 
 impl Arguments {
+    pub fn empty() -> Self {
+        Self { arguments: vec![] }
+    }
+
     pub fn arguments(&self) -> impl Iterator<Item = &String> {
         self.arguments.iter()
+    }
+}
+
+#[cfg(test)]
+impl Arguments {
+    pub fn new<S, I: Iterator<Item = S>, II: IntoIterator<Item = S, IntoIter = I>>(
+        arguments: II,
+    ) -> Self
+    where
+        String: From<S>,
+    {
+        Self {
+            arguments: arguments.into_iter().map(String::from).collect(),
+        }
     }
 }
 
@@ -969,6 +1147,33 @@ pub struct System {
     distribution_id: String,
     total_memory: u64,
     estimated_num_cpu_cores: usize,
+}
+
+#[cfg(test)]
+impl System {
+    pub fn new<NameString, LongOsVerionSring, KernelVersionString, DistributionIdString>(
+        name: Option<NameString>,
+        long_os_version: Option<LongOsVerionSring>,
+        kernel_version: Option<KernelVersionString>,
+        distribution_id: DistributionIdString,
+        total_memory: u64,
+        estimated_num_cpu_cores: usize,
+    ) -> Self
+    where
+        String: From<NameString>
+            + From<LongOsVerionSring>
+            + From<KernelVersionString>
+            + From<DistributionIdString>,
+    {
+        Self {
+            name: name.map(String::from),
+            long_os_version: long_os_version.map(String::from),
+            kernel_version: kernel_version.map(String::from),
+            distribution_id: String::from(distribution_id),
+            total_memory,
+            estimated_num_cpu_cores,
+        }
+    }
 }
 
 impl From<&sysinfo::System> for System {
@@ -1088,6 +1293,25 @@ impl<IS: IdentitySchemeApi> TaskInputs<IS> {
     }
 }
 
+#[cfg(test)]
+impl<IS: IdentitySchemeApi> TaskInputs<IS> {
+    pub fn new(
+        environment_variables: EnvironmentVariables,
+        program: Program,
+        arguments: Arguments,
+        input_files: FileIdentitiesManifest<IS>,
+        outputs_description: Outputs,
+    ) -> Self {
+        Self {
+            environment_variables,
+            program,
+            arguments,
+            input_files,
+            outputs_description,
+        }
+    }
+}
+
 impl<IS: IdentitySchemeApi> TryFrom<TaskInputsTransport<IS>> for TaskInputs<IS> {
     type Error = anyhow::Error;
 
@@ -1122,6 +1346,19 @@ impl<IS: IdentitySchemeApi> IntoTransport for TaskInputs<IS> {
 pub struct TaskOutputs<IS: IdentitySchemeApi> {
     input_files_with_program: FileIdentitiesManifest<IS>,
     output_files: FileIdentitiesManifest<IS>,
+}
+
+#[cfg(test)]
+impl<IS: IdentitySchemeApi> TaskOutputs<IS> {
+    pub fn new(
+        input_files_with_program: FileIdentitiesManifest<IS>,
+        output_files: FileIdentitiesManifest<IS>,
+    ) -> Self {
+        Self {
+            input_files_with_program,
+            output_files,
+        }
+    }
 }
 
 impl<IS: IdentitySchemeApi> TryFrom<TaskOutputsTransport<IS>> for TaskOutputs<IS> {
@@ -1239,12 +1476,12 @@ mod tests {
             FilesManifest::try_from((&mut host_filesystem, inputs_config))
                 .expect("create inputs manifest");
         assert_eq!(
-            FilesManifest::from_paths(vec![
+            FilesManifest::new([
                 // Resolved via `INCLUDE_FILE(...)` inside `a/b/d/p.vwx` file.
-                PathBuf::from("__/referenced"),
-                PathBuf::from("a/n.stu"),
-                PathBuf::from("a/b/d/p.vwx"),
-                PathBuf::from("a/referenced2"),
+                "__/referenced",
+                "a/n.stu",
+                "a/b/d/p.vwx",
+                "a/referenced2",
             ]),
             inputs_manifest
         );
@@ -1252,13 +1489,13 @@ mod tests {
 
     #[test]
     fn test_outputs_manifest() {
-        let inputs_manifest = FilesManifest::from_paths(vec![
-            PathBuf::from("m.stu"),
-            PathBuf::from("a/n.stu"),
-            PathBuf::from("a/b/o.stu"),
-            PathBuf::from("a/b/p.vwx"),
-            PathBuf::from("a/b/c/p.vwx"),
-            PathBuf::from("a/b/d/p.vwx"),
+        let inputs_manifest = FilesManifest::new([
+            "m.stu",
+            "a/n.stu",
+            "a/b/o.stu",
+            "a/b/p.vwx",
+            "a/b/c/p.vwx",
+            "a/b/d/p.vwx",
         ]);
         let outputs_config = OutputsTransport {
             include_files: vec![PathBuf::from("out/log")],
@@ -1292,18 +1529,18 @@ mod tests {
             FilesManifest::try_from((&inputs_manifest, outputs_config))
                 .expect("create inputs manifest");
         assert_eq!(
-            FilesManifest::from_paths(vec![
-                PathBuf::from("out/a/b/d/p.out.1"),
-                PathBuf::from("out/a/b/d/p.out.2"),
-                PathBuf::from("out/a/b/p.out.1"),
-                PathBuf::from("out/a/b/p.out.2"),
-                PathBuf::from("out/a/n.out.1"),
-                PathBuf::from("out/a/n.out.2"),
-                PathBuf::from("out/a/n.out.stu"),
-                PathBuf::from("out/log"),
-                PathBuf::from("out/m.out.1"),
-                PathBuf::from("out/m.out.2"),
-                PathBuf::from("out/m.out.stu"),
+            FilesManifest::new([
+                "out/a/b/d/p.out.1",
+                "out/a/b/d/p.out.2",
+                "out/a/b/p.out.1",
+                "out/a/b/p.out.2",
+                "out/a/n.out.1",
+                "out/a/n.out.2",
+                "out/a/n.out.stu",
+                "out/log",
+                "out/m.out.1",
+                "out/m.out.2",
+                "out/m.out.stu",
             ]),
             outputs_manifest
         );
