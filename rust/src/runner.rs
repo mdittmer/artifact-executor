@@ -165,7 +165,6 @@ pub type TimedRunner<R> = unix::TimedRunner<R>;
 #[cfg(target_os = "linux")]
 mod linux {
     use super::Runner;
-    use crate::blob::JSON;
     use crate::canonical::TaskInputs;
     use crate::fs::Filesystem as FilesystemApi;
     use crate::identity::IdentityScheme as IdentitySchemeApi;
@@ -245,13 +244,10 @@ pub type TracedRunner<R> = linux::TracedRunner<R>;
 #[cfg(unix)]
 #[cfg(test)]
 mod tests {
-    use serde::__private::de::Content;
-
     use super::Runner;
     use super::SimpleRunner;
     use super::TimedRunDeserializer;
     use super::TimedRunner;
-    use super::TracedRunner;
     use crate::blob::ReadDeserializer;
     use crate::canonical::Arguments;
     use crate::canonical::EnvironmentVariables;
@@ -574,13 +570,11 @@ exit 1
         use super::create_and_set_permissions;
         use crate::canonical::Arguments;
         use crate::canonical::EnvironmentVariables;
-        use crate::canonical::FileIdentitiesManifest;
         use crate::canonical::FilesManifest;
         use crate::canonical::Outputs;
         use crate::canonical::Program;
         use crate::canonical::TaskInputs;
         use crate::fs::HostFilesystem;
-        use crate::identity::IdentityScheme;
         use crate::runner::Runner;
         use crate::runner::SimpleRunner;
         use crate::runner::TracedRunner;
@@ -588,7 +582,6 @@ exit 1
         use std::collections::HashSet;
         use std::fs::File;
         use std::path::Path;
-        use std::path::PathBuf;
 
         const FSATRACE_BINARY_PATH: &str = "../fsatrace/fsatrace";
         const FSATRACE_LIBRARY_PATH: &str = "../fsatrace/fsatrace.so";

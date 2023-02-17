@@ -2,11 +2,8 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
-use crate::canonical::FileIdentitiesManifest;
-use crate::canonical::FilesManifest;
 use crate::fs::Filesystem;
 use crate::transport::ContentSha256;
-use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
 use crate::transport::IdentityScheme as IdentitySchemeEnum;
 use crate::transport::Sha256;
 use anyhow::Context as _;
@@ -99,24 +96,6 @@ impl IdentityScheme for ContentSha256 {
     }
 }
 
-fn identify_files<FS, Id, IS>(
-    filesystem: &mut FS,
-    files_manifest: &FilesManifest,
-) -> Result<FileIdentitiesManifest<IS>, anyhow::Error>
-where
-    FS: Filesystem,
-    IS: IdentityScheme<Identity = Id>,
-{
-    FileIdentitiesManifestTransport {
-        identity_scheme: IS::IDENTITY_SCHEME,
-        identities: files_manifest
-            .paths()
-            .map(|path| (path.clone(), IS::identify_file(filesystem, path).ok()))
-            .collect(),
-    }
-    .try_into()
-}
-
 pub trait IntoTransport {
     type Transport: DeserializeOwned + Serialize;
 
@@ -140,15 +119,35 @@ impl<T: Clone + IntoTransport> AsTransport for T {
 
 #[cfg(test)]
 mod tests {
-    use super::identify_files;
     use crate::canonical::FileIdentitiesManifest;
     use crate::canonical::FilesManifest;
+    use crate::fs::Filesystem;
     use crate::fs::HostFilesystem;
+    use crate::identity::IdentityScheme;
     use crate::transport::ContentSha256;
+    use crate::transport::FileIdentitiesManifest as FileIdentitiesManifestTransport;
     use crate::transport::Sha256;
     use sha2::Digest as _;
     use sha2::Sha256 as Sha256Hasher;
     use std::path::PathBuf;
+
+    fn identify_files<FS, Id, IS>(
+        filesystem: &mut FS,
+        files_manifest: &FilesManifest,
+    ) -> Result<FileIdentitiesManifest<IS>, anyhow::Error>
+    where
+        FS: Filesystem,
+        IS: IdentityScheme<Identity = Id>,
+    {
+        FileIdentitiesManifestTransport {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities: files_manifest
+                .paths()
+                .map(|path| (path.clone(), IS::identify_file(filesystem, path).ok()))
+                .collect(),
+        }
+        .try_into()
+    }
 
     fn get_sha256_from_str(content_str: &str) -> Sha256 {
         let mut hasher = Sha256Hasher::new();
