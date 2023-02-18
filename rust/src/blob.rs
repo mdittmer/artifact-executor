@@ -175,6 +175,10 @@ impl<Filesystem: FilesystemApi, IdentityScheme: IdentitySchemeApi>
     }
 }
 
+pub trait FileFormat {
+    const EXTENSION: &'static str;
+}
+
 pub trait StringSerializer {
     type Error: ErrorBound;
 
@@ -194,6 +198,10 @@ pub trait ReadDeserializer {
 }
 
 pub struct JSON;
+
+impl FileFormat for JSON {
+    const EXTENSION: &'static str = "json";
+}
 
 impl StringSerializer for JSON {
     type Error = serde_json::Error;

@@ -2,138 +2,216 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
-// use std::path::PathBuf;
-// use crate::transport::Inputs as InputsConfig;
-// use crate::transport::Outputs as OutputsConfig;
+use crate::blob::BlobCache;
+use crate::blob::BlobPointerCache;
+use crate::blob::BlobPointerFileCache;
+use crate::blob::FileFormat;
+use crate::blob::ReadDeserializer;
+use crate::blob::StringSerializer;
+use crate::blob::WriteSerializer;
+use crate::canonical::Listing;
+use crate::canonical::Outputs;
+use crate::canonical::TaskInputs;
+use crate::canonical::TaskOutputs;
+use crate::error::Error as ErrorBound;
+use crate::fs::Filesystem as FilesystemApi;
+use crate::identity::IdentityScheme as IdentitySchemeApi;
+use crate::runner::Runner;
+use crate::runner::SimpleRunner;
+use crate::transport::Listing as ListingTransport;
+use crate::transport::TaskInputs as TaskInputsTransport;
+use anyhow::Context as _;
+use std::fs::File;
+use std::path::Path;
+use std::path::PathBuf;
 
-// fn parse_files_manifest_description(
-//     files_manifest_description: &PathBuf,
-// ) -> anyhow::Result<InputsConfig> {
-//     let files_manifest_description_contents = std::fs::read_to_string(files_manifest_description)?;
-//     Ok(json5::from_str(&files_manifest_description_contents)?)
-// }
+pub trait TaskExecutor<FS: FilesystemApi, IS: IdentitySchemeApi> {
+    type Error: ErrorBound;
 
-// fn parse_inputs(
-//     inputs_manifest_description: &PathBuf,
-// ) -> anyhow::Result<InputsConfig> {
-//     parse_files_manifest_description(inputs_manifest_description)
-// }
+    fn load_or_execute(
+        &mut self,
+        working_directory: &mut FS,
+        inputs: &TaskInputs<IS>,
+    ) -> Result<TaskOutputs<IS>, Self::Error>;
 
-// fn parse_outputs(
-//     outputs_manifest_description: &PathBuf,
-// ) -> anyhow::Result<InputsConfig> {
-//     parse_files_manifest_description(outputs_manifest_description)
-// }
+    fn load_or_execute_identity(
+        &mut self,
+        working_directory: &mut FS,
+        inputs_identity: &IS::Identity,
+    ) -> Result<TaskOutputs<IS>, Self::Error>;
 
-// #[cfg(test)]
-// mod tests {
-//     use super::ExecuteQuery;
-//     use crate::args::Execute as ExecuteCommand;
-//     use std::collections::HashMap;
-//     use std::io::Write as _;
-//     use std::os::unix::fs::PermissionsExt as _;
-//     use std::path::Path;
-//     use std::path::PathBuf;
+    fn force_execute(
+        &mut self,
+        working_directory: &mut FS,
+        inputs: &TaskInputs<IS>,
+    ) -> Result<TaskOutputs<IS>, Self::Error>;
 
-//     fn write_files(directory: &Path, files: HashMap<&'static str, &'static str>) {
-//         for (path, contents) in files {
-//             let mut file = std::fs::File::create(directory.join(path)).expect("create test file");
-//             file.write_all(contents.as_bytes())
-//                 .expect("write all to test file");
-//         }
-//     }
+    fn force_execute_identity(
+        &mut self,
+        working_directory: &mut FS,
+        inputs_identity: &IS::Identity,
+    ) -> Result<TaskOutputs<IS>, Self::Error>;
+}
 
-//     fn mark_as_executable<P: AsRef<Path>>(path: P) {
-//         let mut permissions = path
-//             .as_ref()
-//             .metadata()
-//             .expect("metadata for mark-as-executable")
-//             .permissions();
-//         permissions.set_mode(permissions.mode() | 0o100);
-//         std::fs::set_permissions(path, permissions).expect("mark-as-executable");
-//     }
+pub struct CacheDirectoryTaskExecutor<
+    FS: FilesystemApi,
+    IS: IdentitySchemeApi,
+    S: FileFormat + ReadDeserializer + StringSerializer + WriteSerializer,
+    R: Runner,
+> {
+    blobs_cache: BlobCache<FS, IS, S>,
+    outputs_pointers: BlobPointerCache<FS, IS, S>,
+    stdouts_pointers: BlobPointerFileCache<FS, IS>,
+    stderrs_pointers: BlobPointerFileCache<FS, IS>,
+    runner: R,
+}
 
-//     #[test]
-//     fn test_vacuous_command() {
-//         let temporary_directory = tempfile::tempdir().expect("temporary directory");
-//         println!("{:?}", temporary_directory.path());
-//         write_files(
-//             temporary_directory.path(),
-//             maplit::hashmap! {
-//                 "env" => "\n",
-//                 "inputs" => "\n",
-//                 "outputs" => "\n",
-//                 "program" => "#!/usr/bin/env bash\n",
-//             },
-//         );
-//         mark_as_executable(temporary_directory.path().join("program"));
-//         let command = ExecuteQuery::from_command(
-//             temporary_directory.path().to_path_buf(),
-//             ExecuteCommand {
-//                 program: temporary_directory.path().join("program"),
-//                 environment: temporary_directory.path().join("env"),
-//                 inputs: temporary_directory.path().join("inputs"),
-//                 outputs: temporary_directory.path().join("outputs"),
-//             },
-//         )
-//         .expect("instantiate execute command");
+impl<
+        FS: FilesystemApi,
+        IS: IdentitySchemeApi,
+        S: FileFormat + ReadDeserializer + StringSerializer + WriteSerializer,
+        R: Runner,
+    > CacheDirectoryTaskExecutor<FS, IS, S, R>
+{
+    const DEFAULT_BLOBS_DIRECTORY: &str = "blobs";
+    const DEFAULT_OUTPUTS_POINTERS_DIRECTORY: &str = "inputs_to_outputs";
+    const DEFAULT_STDOUTS_POINTERS_DIRECTORY: &str = "inputs_to_stdouts";
+    const DEFAULT_STDERRS_POINTERS_DIRECTORY: &str = "inputs_to_stderrs";
 
-//         assert_eq!(temporary_directory.path().join("program"), command.command);
-//         assert_eq!(maplit::hashmap! {}, command.environment);
-//         assert_eq!(vec![] as Vec<PathBuf>, command.inputs);
-//         assert_eq!(vec![] as Vec<PathBuf>, command.outputs);
-//     }
+    pub fn new_with_runner(mut filesystem: FS, runner: R) -> anyhow::Result<Self> {
+        let blobs_filesystem = filesystem
+            .sub_system(Self::DEFAULT_BLOBS_DIRECTORY)
+            .context("creating blobs directory")?;
+        let outputs_filesystem = filesystem
+            .sub_system(Self::DEFAULT_OUTPUTS_POINTERS_DIRECTORY)
+            .context("creating inputs->outputs pointers directory")?;
+        let stdouts_filesystem = filesystem
+            .sub_system(Self::DEFAULT_STDOUTS_POINTERS_DIRECTORY)
+            .context("creating stdouts directory")?;
+        let stderrs_filesystem = filesystem
+            .sub_system(Self::DEFAULT_STDERRS_POINTERS_DIRECTORY)
+            .context("creating stderrs directory")?;
 
-//     #[test]
-//     fn test_interesting_command() {
-//         let temporary_directory = tempfile::tempdir().expect("temporary directory");
-//         println!("{:?}", temporary_directory.path());
-//         write_files(
-//             temporary_directory.path(),
-//             maplit::hashmap! {
-//                 "env" => "a=x\nb=y=z\n\n c\t=  z\t ",
-//                 "inputs" => "a/b/c\n\nd/ e\t/f\n./x/y/z/../z\n",
-//                 "outputs" => "a\nb\n\n c\nd ",
-//                 "program" => "#!/usr/bin/env bash",
-//             },
-//         );
-//         mark_as_executable(temporary_directory.path().join("program"));
-//         let command = ExecuteQuery::from_command(
-//             temporary_directory.path().to_path_buf(),
-//             ExecuteCommand {
-//                 program: temporary_directory.path().join("program"),
-//                 environment: temporary_directory.path().join("env"),
-//                 inputs: temporary_directory.path().join("inputs"),
-//                 outputs: temporary_directory.path().join("outputs"),
-//             },
-//         )
-//         .expect("instantiate execute command");
+        let blobs_cache = BlobCache::new(blobs_filesystem);
+        let outputs_pointers = BlobPointerCache::new(outputs_filesystem);
+        let stdouts_pointers = BlobPointerFileCache::new(stdouts_filesystem);
+        let stderrs_pointers = BlobPointerFileCache::new(stderrs_filesystem);
 
-//         assert_eq!(temporary_directory.path().join("program"), command.command);
-//         assert_eq!(
-//             maplit::hashmap! {
-//                 "a".to_string() => "x".to_string(),
-//                 "b".to_string() => "y=z".to_string(),
-//                 " c\t".to_string() => "  z\t ".to_string(),
-//             },
-//             command.environment
-//         );
-//         assert_eq!(
-//             vec![
-//                 PathBuf::from("a/b/c"),
-//                 PathBuf::from("d/ e\t/f"),
-//                 PathBuf::from("./x/y/z/../z"),
-//             ] as Vec<PathBuf>,
-//             command.inputs
-//         );
-//         assert_eq!(
-//             vec![
-//                 PathBuf::from("a"),
-//                 PathBuf::from("b"),
-//                 PathBuf::from(" c"),
-//                 PathBuf::from("d "),
-//             ] as Vec<PathBuf>,
-//             command.outputs
-//         );
-//     }
-// }
+        Ok(Self {
+            blobs_cache,
+            outputs_pointers,
+            stdouts_pointers,
+            stderrs_pointers,
+            runner,
+        })
+    }
+}
+
+impl<
+        FS: FilesystemApi,
+        IS: IdentitySchemeApi,
+        S: FileFormat + ReadDeserializer + StringSerializer + WriteSerializer,
+    > CacheDirectoryTaskExecutor<FS, IS, S, SimpleRunner>
+{
+    pub fn new(mut filesystem: FS) -> anyhow::Result<Self> {
+        Self::new_with_runner(filesystem, SimpleRunner)
+    }
+
+    fn do_force_execute(
+        &mut self,
+        working_directory: &mut FS,
+        inputs: &TaskInputs<IS>,
+        inputs_identity: &IS::Identity,
+    ) -> anyhow::Result<TaskOutputs<IS>> {
+        let stdout_file = self
+            .stdouts_pointers
+            .open_file_for_write(inputs_identity)
+            .context("opening stdout file for task executor")?;
+        let stderr_file = self
+            .stderrs_pointers
+            .open_file_for_write(inputs_identity)
+            .context("opening stderr file for task executor")?;
+        self.runner
+            .run_task(working_directory, inputs, stdout_file, stderr_file)
+            .context("executing task")?;
+
+        inputs
+            .outputs_description()
+            .try_into()
+            .context("computing concrete outputs for task executor")
+    }
+}
+
+impl<
+        FS: FilesystemApi,
+        IS: IdentitySchemeApi,
+        S: FileFormat + ReadDeserializer + StringSerializer + WriteSerializer,
+        R: Runner,
+    > TaskExecutor<FS, IS> for CacheDirectoryTaskExecutor<FS, IS, S, R>
+{
+    type Error = anyhow::Error;
+
+    fn load_or_execute(
+        &mut self,
+        working_directory: &mut FS,
+        inputs: &TaskInputs<IS>,
+    ) -> Result<TaskOutputs<IS>, Self::Error> {
+        let mut inputs_contents = vec![];
+        S::to_writer(&mut inputs_contents, inputs)
+            .context("serializing inputs object for task executor")?;
+        let inputs_identity = IS::identify_content(input_contents)
+            .context("identifying serialized inputs object for task executor")?;
+        if let Ok(cached_outputs_identity) =
+            self.outputs_pointers.read_blob_pointer(source_identity)
+        {
+            self.blobs_cache
+                .read_blob(&cached_outputs_identity)
+                .context("opening cached outputs description blob for task executor")?
+        } else {
+            self.force_execute(working_directory, inputs)
+        }
+    }
+
+    fn load_or_execute_identity(
+        &mut self,
+        working_directory: &mut FS,
+        inputs_identity: &IS::Identity,
+    ) -> Result<TaskOutputs<IS>, Self::Error> {
+        if let Ok(cached_outputs_identity) =
+            self.outputs_pointers.read_blob_pointer(source_identity)
+        {
+            self.blobs_cache
+                .read_blob(&cached_outputs_identity)
+                .context("opening cached outputs description blob for task executor")?
+        } else {
+            self.force_execute_identity(working_directory, inputs_identity)
+        }
+    }
+
+    fn force_execute(
+        &mut self,
+        working_directory: &mut FS,
+        inputs: &TaskInputs<IS>,
+    ) -> Result<TaskOutputs<IS>, Self::Error> {
+        let mut inputs_contents = vec![];
+        S::to_writer(&mut inputs_contents, inputs)
+            .context("serializing inputs object for task executor")?;
+        let inputs_identity = IS::identify_content(inputs_contents)
+            .context("identifying serialized inputs object for task executor")?;
+        self.do_force_execute(working_directory, inputs, &inputs_identity)
+    }
+
+    fn force_execute_identity(
+        &mut self,
+        working_directory: &mut FS,
+        inputs_identity: &IS::Identity,
+    ) -> Result<TaskOutputs<IS>, Self::Error> {
+        let inputs: TaskInputs<IS> = self
+            .blobs_cache
+            .read_blob::<TaskInputsTransport<IS>>(&inputs_identity)
+            .context("opening inputs blob for task executor")?
+            .try_into()
+            .context("deserializing inputs blob for task executor")?;
+        self.do_force_execute(working_directory, &inputs, inputs_identity)
+    }
+}

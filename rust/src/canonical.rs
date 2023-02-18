@@ -149,6 +149,12 @@ pub struct Listing<Identity: IdentityBound> {
 }
 
 impl<Identity: IdentityBound> Listing<Identity> {
+    pub fn empty() -> Self {
+        Self {
+            entries: HashSet::new(),
+        }
+    }
+
     pub fn put(&mut self, identity: Identity) -> bool {
         if self.entries.contains(&identity) {
             false
@@ -1380,6 +1386,12 @@ impl<IS: IdentitySchemeApi> IntoTransport for TaskOutputs<IS> {
             input_files_with_program: self.input_files_with_program.as_transport(),
             output_files: self.output_files.as_transport(),
         }
+    }
+}
+
+impl<IS: IdentitySchemeApi> TryFrom<Outputs> for TaskOutputs<IS> {
+    fn try_from(outputs: Outputs) -> Result<Self, Error> {
+        // TODO: Implement computing similar to (& mut FS, Inputs) -> ... conversion.
     }
 }
 
