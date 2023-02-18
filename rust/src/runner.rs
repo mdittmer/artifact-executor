@@ -91,8 +91,13 @@ mod unix {
 
     pub type TimedRunDeserializer = JSON;
 
-    pub const DEFAULT_TIME_UTILITY_PATH: &str = "/usr/bin/time";
-    pub const TIME_FORMAT_SPECIFIER: &str =
+    // TODO: Find a non-GPL implementation of `time` functionality to allow vendoring.
+    #[cfg(target_os = "macos")]
+    pub const DEFAULT_GNU_TIME_UTILITY_PATH: &str = "/usr/local/bin/gtime";
+    #[cfg(not(target_os = "macos"))]
+    pub const DEFAULT_GNU_TIME_UTILITY_PATH: &str = "/usr/bin/time";
+
+    pub const JSON_GNU_TIME_FORMAT_SPECIFIER: &str =
         r#"{"wall_clock_seconds":%e,"user_mode_seconds":%U,"kernel_mode_seconds":%S}"#;
 
     pub struct TimedRunner<R: Runner> {
@@ -105,13 +110,13 @@ mod unix {
         pub fn try_new<P: AsRef<Path>>(time_output_path: P, delegate: R) -> anyhow::Result<Self> {
             time_output_path.as_ref().to_str().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "time utility output path, {:?}, cannot be formatted as string",
+                    "gnu time utility output path, {:?}, cannot be formatted as string",
                     time_output_path.as_ref()
                 )
             })?;
 
             Ok(Self {
-                time_program_path: PathBuf::from(DEFAULT_TIME_UTILITY_PATH),
+                time_program_path: PathBuf::from(DEFAULT_GNU_TIME_UTILITY_PATH),
                 time_output_path: time_output_path.as_ref().to_path_buf(),
                 delegate,
             })
@@ -140,10 +145,10 @@ mod unix {
                         String::from(
                             self.time_output_path
                                 .to_str()
-                                .expect("time utility output path can be formatted as string"),
+                                .expect("gnu time utility output path can be formatted as string"),
                         ),
                         String::from("-f"),
-                        String::from(TIME_FORMAT_SPECIFIER),
+                        String::from(JSON_GNU_TIME_FORMAT_SPECIFIER),
                     ]
                     .into_iter(),
                 );
@@ -154,7 +159,7 @@ mod unix {
 }
 
 #[cfg(unix)]
-pub const DEFAULT_TIME_UTILITY_PATH: &str = unix::DEFAULT_TIME_UTILITY_PATH;
+pub const DEFAULT_GNU_TIME_UTILITY_PATH: &str = unix::DEFAULT_GNU_TIME_UTILITY_PATH;
 
 #[cfg(unix)]
 pub type TimedRunDeserializer = unix::TimedRunDeserializer;
@@ -556,6 +561,23 @@ exit 1
                     stdout_file,
                     stderr_file,
                 )
+                .map_err(|err| {
+                    if let (Ok(stdout_string), Ok(stderr_string)) = (
+                        std::fs::read_to_string(&stdout_path),
+                        std::fs::read_to_string(&stderr_path),
+                    ) {
+                        err.context(format!(
+                            "\n++++ stdout ++++\n{}\n---- stdout ----\n",
+                            stdout_string
+                        ))
+                        .context(format!(
+                            "\n++++ stderr ++++\n{}\n---- stderr ----\n",
+                            stderr_string
+                        ))
+                    } else {
+                        err
+                    }
+                })
                 .expect("run program");
         }
 

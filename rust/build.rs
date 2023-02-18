@@ -2,6 +2,7 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 fn main() {
