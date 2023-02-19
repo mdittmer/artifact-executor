@@ -2,9 +2,6 @@
 // Use of this source code is governed by a Apache-style license that can be
 // found in the LICENSE file.
 
-use regex::Regex;
-use sysinfo::SystemExt;
-
 use crate::context::diff_items_to_string;
 use crate::fs::Filesystem as FilesystemApi;
 use crate::identity::AsTransport;
@@ -26,6 +23,9 @@ use crate::transport::Program as ProgramTransport;
 use crate::transport::System as SystemTransport;
 use crate::transport::TaskInputs as TaskInputsTransport;
 use crate::transport::TaskOutputs as TaskOutputsTransport;
+use anyhow::Context as _;
+use regex::Regex;
+use std::borrow::Borrow;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -35,6 +35,7 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
+use sysinfo::SystemExt;
 
 #[derive(Clone, Debug)]
 pub struct RegularExpression {
@@ -106,6 +107,16 @@ impl IntoTransport for RegularExpression {
 pub struct MatchTransform {
     match_regular_expression: RegularExpression,
     match_transform_expressions: Vec<String>,
+}
+
+impl MatchTransform {
+    pub fn match_regular_expression(&self) -> &Regex {
+        &self.match_regular_expression.regular_expression
+    }
+
+    pub fn match_transform_expressions(&self) -> impl Iterator<Item = &String> {
+        self.match_transform_expressions.iter()
+    }
 }
 
 #[cfg(test)]
@@ -456,7 +467,7 @@ impl<FS: FilesystemApi> TryFrom<(&mut FS, InputsTransport)> for FilesManifest {
             );
         }
 
-        let files = get_matching_files(filesystem, &description)?;
+        let files = get_matching_input_files(filesystem, &description)?;
 
         let mut paths: Vec<PathBuf> = files.into_iter().collect();
         paths.sort();
@@ -482,7 +493,7 @@ fn surely_includes_none(inputs_config: &InputsTransport) -> bool {
 }
 
 /// Gets the set of files that match include/exclude pattern matching in `inputs_config`.
-fn get_matching_files<FS: FilesystemApi>(
+fn get_matching_input_files<FS: FilesystemApi>(
     filesystem: &mut FS,
     inputs_config: &InputsTransport,
 ) -> anyhow::Result<HashSet<PathBuf>> {
@@ -535,9 +546,10 @@ fn get_matching_files<FS: FilesystemApi>(
             // Match against either declared set of files or else initial set of files(before inter-file
             // processing.
             let matching_files = match &inter_file_references_config.files_to_match {
-                Some(declared_matching_files) => {
-                    Cow::Owned(get_matching_files(filesystem, declared_matching_files)?)
-                }
+                Some(declared_matching_files) => Cow::Owned(get_matching_input_files(
+                    filesystem,
+                    declared_matching_files,
+                )?),
                 None => Cow::Borrowed(&files),
             };
 
@@ -1389,10 +1401,102 @@ impl<IS: IdentitySchemeApi> IntoTransport for TaskOutputs<IS> {
     }
 }
 
-impl<IS: IdentitySchemeApi> TryFrom<Outputs> for TaskOutputs<IS> {
-    fn try_from(outputs: Outputs) -> Result<Self, Error> {
-        // TODO: Implement computing similar to (& mut FS, Inputs) -> ... conversion.
+impl<FS: FilesystemApi, IS: IdentitySchemeApi> TryFrom<(&mut FS, &TaskInputs<IS>)>
+    for TaskOutputs<IS>
+{
+    type Error = anyhow::Error;
+
+    fn try_from(filesystem_and_inputs: (&mut FS, &TaskInputs<IS>)) -> Result<Self, Self::Error> {
+        let (filesystem, inputs) = filesystem_and_inputs;
+
+        let program_path = inputs.program().clone();
+        let program_identity =
+            IS::identify_file(filesystem, &program_path).context("identifying program")?;
+        let mut input_files_with_program = vec![(program_path, Some(program_identity))];
+        input_files_with_program.extend(
+            inputs
+                .input_files()
+                .map(|path_and_identity| path_and_identity.clone()),
+        );
+        input_files_with_program.sort_by(|(path1, _), (path2, _)| path1.cmp(path2));
+        let input_files_with_program = FileIdentitiesManifest {
+            identity_scheme: IS::IDENTITY_SCHEME,
+            identities: input_files_with_program,
+        };
+
+        let mut output_files: Vec<_> = get_matching_output_files(inputs)?.into_iter().collect();
+        output_files.sort();
+        let output_files = output_files
+            .into_iter()
+            .map(|path| {
+                let identity = IS::identify_file(filesystem, &path)?;
+                Ok((path, Some(identity)))
+            })
+            .collect::<Result<Vec<_>, anyhow::Error>>()
+            .context("identifying matched output files")?;
+
+        Ok(Self {
+            input_files_with_program,
+            output_files: FileIdentitiesManifest {
+                identity_scheme: IS::IDENTITY_SCHEME,
+                identities: output_files,
+            },
+        })
     }
+}
+
+/// Gets the set of files that matches transformations from  `inputs.input_files()` through
+/// `inputs.outputs_description()` transformations.
+fn get_matching_output_files<IS: IdentitySchemeApi>(
+    inputs: &TaskInputs<IS>,
+) -> anyhow::Result<HashSet<PathBuf>> {
+    let outputs = inputs.outputs_description();
+    let mut files: HashSet<PathBuf> = outputs.include_files.iter().map(PathBuf::clone).collect();
+
+    for match_transforms in outputs.include_match_transforms.iter() {
+        for (input_path, _) in inputs.input_files() {
+            let mut output_path = input_path
+                .to_str()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "input file has path, {:?}, that cannot be encoded as a string",
+                        input_path
+                    )
+                })?
+                .to_string();
+            for match_transform in match_transforms {
+                let regular_expression = match_transform.match_regular_expression();
+                if !regular_expression.is_match(&output_path) {
+                    break;
+                }
+
+                for transform in match_transform.match_transform_expressions() {
+                    output_path = match_transform
+                        .match_regular_expression
+                        .regular_expression
+                        .replace_all(&output_path, transform)
+                        .to_string();
+                }
+
+                let mut exclude = false;
+                for exclude_match in outputs.exclude_matches.iter() {
+                    if exclude_match
+                        .regular_expression
+                        .is_match(output_path.borrow())
+                    {
+                        exclude = true;
+                        break;
+                    }
+                }
+
+                if !exclude {
+                    files.insert(PathBuf::from(&output_path));
+                }
+            }
+        }
+    }
+
+    Ok(files)
 }
 
 #[cfg(test)]

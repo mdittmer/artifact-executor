@@ -9,48 +9,42 @@ use crate::blob::FileFormat;
 use crate::blob::ReadDeserializer;
 use crate::blob::StringSerializer;
 use crate::blob::WriteSerializer;
-use crate::canonical::Listing;
-use crate::canonical::Outputs;
 use crate::canonical::TaskInputs;
 use crate::canonical::TaskOutputs;
-use crate::error::Error as ErrorBound;
 use crate::fs::Filesystem as FilesystemApi;
+use crate::identity::AsTransport;
 use crate::identity::IdentityScheme as IdentitySchemeApi;
 use crate::runner::Runner;
 use crate::runner::SimpleRunner;
-use crate::transport::Listing as ListingTransport;
 use crate::transport::TaskInputs as TaskInputsTransport;
+use crate::transport::TaskOutputs as TaskOutputsTransport;
 use anyhow::Context as _;
-use std::fs::File;
-use std::path::Path;
-use std::path::PathBuf;
+use std::io::Cursor;
 
 pub trait TaskExecutor<FS: FilesystemApi, IS: IdentitySchemeApi> {
-    type Error: ErrorBound;
-
     fn load_or_execute(
         &mut self,
         working_directory: &mut FS,
         inputs: &TaskInputs<IS>,
-    ) -> Result<TaskOutputs<IS>, Self::Error>;
+    ) -> anyhow::Result<TaskOutputs<IS>>;
 
     fn load_or_execute_identity(
         &mut self,
         working_directory: &mut FS,
         inputs_identity: &IS::Identity,
-    ) -> Result<TaskOutputs<IS>, Self::Error>;
+    ) -> anyhow::Result<TaskOutputs<IS>>;
 
     fn force_execute(
         &mut self,
         working_directory: &mut FS,
         inputs: &TaskInputs<IS>,
-    ) -> Result<TaskOutputs<IS>, Self::Error>;
+    ) -> anyhow::Result<TaskOutputs<IS>>;
 
     fn force_execute_identity(
         &mut self,
         working_directory: &mut FS,
         inputs_identity: &IS::Identity,
-    ) -> Result<TaskOutputs<IS>, Self::Error>;
+    ) -> anyhow::Result<TaskOutputs<IS>>;
 }
 
 pub struct CacheDirectoryTaskExecutor<
@@ -105,17 +99,6 @@ impl<
             runner,
         })
     }
-}
-
-impl<
-        FS: FilesystemApi,
-        IS: IdentitySchemeApi,
-        S: FileFormat + ReadDeserializer + StringSerializer + WriteSerializer,
-    > CacheDirectoryTaskExecutor<FS, IS, S, SimpleRunner>
-{
-    pub fn new(mut filesystem: FS) -> anyhow::Result<Self> {
-        Self::new_with_runner(filesystem, SimpleRunner)
-    }
 
     fn do_force_execute(
         &mut self,
@@ -135,10 +118,20 @@ impl<
             .run_task(working_directory, inputs, stdout_file, stderr_file)
             .context("executing task")?;
 
-        inputs
-            .outputs_description()
+        (working_directory, inputs)
             .try_into()
             .context("computing concrete outputs for task executor")
+    }
+}
+
+impl<
+        FS: FilesystemApi,
+        IS: IdentitySchemeApi,
+        S: FileFormat + ReadDeserializer + StringSerializer + WriteSerializer,
+    > CacheDirectoryTaskExecutor<FS, IS, S, SimpleRunner>
+{
+    pub fn new(filesystem: FS) -> anyhow::Result<Self> {
+        Self::new_with_runner(filesystem, SimpleRunner)
     }
 }
 
@@ -149,24 +142,25 @@ impl<
         R: Runner,
     > TaskExecutor<FS, IS> for CacheDirectoryTaskExecutor<FS, IS, S, R>
 {
-    type Error = anyhow::Error;
-
     fn load_or_execute(
         &mut self,
         working_directory: &mut FS,
         inputs: &TaskInputs<IS>,
-    ) -> Result<TaskOutputs<IS>, Self::Error> {
+    ) -> anyhow::Result<TaskOutputs<IS>> {
         let mut inputs_contents = vec![];
-        S::to_writer(&mut inputs_contents, inputs)
+        let imports_transport = inputs.as_transport();
+        S::to_writer(&mut inputs_contents, &imports_transport)
             .context("serializing inputs object for task executor")?;
-        let inputs_identity = IS::identify_content(input_contents)
+        let inputs_identity = IS::identify_content(Cursor::new(inputs_contents))
             .context("identifying serialized inputs object for task executor")?;
         if let Ok(cached_outputs_identity) =
-            self.outputs_pointers.read_blob_pointer(source_identity)
+            self.outputs_pointers.read_blob_pointer(&inputs_identity)
         {
             self.blobs_cache
-                .read_blob(&cached_outputs_identity)
-                .context("opening cached outputs description blob for task executor")?
+                .read_blob::<TaskOutputsTransport<IS>>(&cached_outputs_identity)
+                .context("deserializing cached outputs description blob for task executor")?
+                .try_into()
+                .context("verifiying cached outputs description blob for task executor")
         } else {
             self.force_execute(working_directory, inputs)
         }
@@ -176,13 +170,15 @@ impl<
         &mut self,
         working_directory: &mut FS,
         inputs_identity: &IS::Identity,
-    ) -> Result<TaskOutputs<IS>, Self::Error> {
+    ) -> anyhow::Result<TaskOutputs<IS>> {
         if let Ok(cached_outputs_identity) =
-            self.outputs_pointers.read_blob_pointer(source_identity)
+            self.outputs_pointers.read_blob_pointer(inputs_identity)
         {
             self.blobs_cache
-                .read_blob(&cached_outputs_identity)
-                .context("opening cached outputs description blob for task executor")?
+                .read_blob::<TaskOutputsTransport<IS>>(&cached_outputs_identity)
+                .context("deserializing cached outputs description blob for task executor")?
+                .try_into()
+                .context("verifying cached outputs description blob for task executor")
         } else {
             self.force_execute_identity(working_directory, inputs_identity)
         }
@@ -192,11 +188,11 @@ impl<
         &mut self,
         working_directory: &mut FS,
         inputs: &TaskInputs<IS>,
-    ) -> Result<TaskOutputs<IS>, Self::Error> {
+    ) -> anyhow::Result<TaskOutputs<IS>> {
         let mut inputs_contents = vec![];
-        S::to_writer(&mut inputs_contents, inputs)
+        S::to_writer(&mut inputs_contents, &inputs.as_transport())
             .context("serializing inputs object for task executor")?;
-        let inputs_identity = IS::identify_content(inputs_contents)
+        let inputs_identity = IS::identify_content(Cursor::new(inputs_contents))
             .context("identifying serialized inputs object for task executor")?;
         self.do_force_execute(working_directory, inputs, &inputs_identity)
     }
@@ -205,7 +201,7 @@ impl<
         &mut self,
         working_directory: &mut FS,
         inputs_identity: &IS::Identity,
-    ) -> Result<TaskOutputs<IS>, Self::Error> {
+    ) -> anyhow::Result<TaskOutputs<IS>> {
         let inputs: TaskInputs<IS> = self
             .blobs_cache
             .read_blob::<TaskInputsTransport<IS>>(&inputs_identity)

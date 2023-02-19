@@ -10,10 +10,11 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Stdio;
 
 pub trait Filesystem: Clone + Sized {
     type Read: Read;
-    type Write: Write;
+    type Write: Into<Stdio> + Write;
     type IoError: ErrorBound;
     type PatternError: ErrorBound;
     type GlobError: ErrorBound;
